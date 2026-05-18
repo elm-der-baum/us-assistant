@@ -25,10 +25,28 @@ async function api(method, path, body) {
   const opts = { method, headers: { "Content-Type": "application/json" }, credentials: "include" };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(API + path, opts);
-  return res.json();
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (e) {
+    return { error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+  }
 }
 
 function el(id) { return document.getElementById(id); }
+
+function errorText(err) {
+  if (!err) return "Unbekannter Fehler";
+  if (err === "no_valid_token") return "Nicht mit Google verbunden. Bitte unter Einstellungen mit Google anmelden.";
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    if (err.message) return err.message;
+    if (err.error_description) return err.error_description;
+    if (err.status && err.message) return `${err.status}: ${err.message}`;
+    try { return JSON.stringify(err, null, 2); } catch(e) { return String(err); }
+  }
+  return String(err);
+}
 
 // ---- Auth & State ----
 async function checkAuth() {
@@ -113,13 +131,13 @@ async function loadCalendar() {
   try {
     const data = await api("GET", "/api/calendar/events?timeMin=" + encodeURIComponent(new Date().toISOString()));
     if (data.error) {
-      status.textContent = data.error === "no_valid_token" ? "Nicht mit Google verbunden. Bitte unter Einstellungen mit Google anmelden." : data.error;
+      status.textContent = errorText(data.error);
       status.classList.remove("hidden");
       grid.innerHTML = "";
       return;
     }
     status.classList.add("hidden");
-    const items = data.items || [];
+    const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) { grid.textContent = "Keine Termine gefunden."; return; }
     grid.innerHTML = items.slice(0, 30).map(ev => {
       const start = ev.start ? (ev.start.dateTime || ev.start.date) : "?";
@@ -140,13 +158,13 @@ async function loadTodos() {
   try {
     const data = await api("GET", "/api/tasks");
     if (data.error) {
-      status.textContent = data.error === "no_valid_token" ? "Nicht mit Google verbunden." : data.error;
+      status.textContent = errorText(data.error);
       status.classList.remove("hidden");
       list.innerHTML = "";
       return;
     }
     status.classList.add("hidden");
-    const items = data.items || [];
+    const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) { list.innerHTML = "Keine Todos gefunden."; return; }
     list.innerHTML = items.map(t => {
       const done = t.status === "completed";

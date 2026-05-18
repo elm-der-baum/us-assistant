@@ -134,6 +134,7 @@ main {
   border-radius: var(--radius);
   padding: 12px; margin-bottom: 12px;
 }
+.status-banner { white-space: pre-wrap; }
 
 .calendar-grid, .todos-list, .safemode-list, .settings-section, .chat-messages {
   background: rgba(17,26,51,.86);
