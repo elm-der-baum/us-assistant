@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<title>Assistant</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<div id="login-gate" class="gate hidden">
+  <div class="gate-card">
+    <div class="gate-icon">🔐</div>
+    <h2>Google Login erforderlich</h2>
+    <p>Dein Google Account ist der Login für diese App. Kalender, Todos, Chat-Verlauf, Safe-Mode-Freigaben und persönliche Einstellungen hängen an diesem Konto.</p>
+    <div id="gate-status" class="hint"></div>
+    <div class="setting-actions center-actions">
+      <button id="btn-gate-login" class="btn-primary">Mit Google anmelden</button>
+      <button id="btn-gate-setup" class="btn-secondary">Google App einrichten</button>
+    </div>
+  </div>
+</div>
+
+<div id="setup-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="setup-title">Google OAuth App konfigurieren</h2>
+      <button id="btn-setup-close" class="btn-secondary" type="button">✕</button>
+    </div>
+    <p class="hint">Vor dem Google Login braucht Assistant eine OAuth-Client-ID und ein Client-Secret aus deiner Google Cloud Console.</p>
+
+    <div class="setup-steps">
+      <h3>Google Console Registrierung</h3>
+      <ol>
+        <li>Öffne <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → APIs &amp; Services → Credentials</a>.</li>
+        <li>Aktiviere APIs: <strong>Google Calendar API</strong> und <strong>Google Tasks API</strong>.</li>
+        <li>OAuth Consent Screen einrichten; als Test-User deine Google-Mail hinzufügen.</li>
+        <li><strong>Create Credentials → OAuth Client ID → Web application</strong>.</li>
+        <li>Authorized JavaScript origins:<br><code>https://findyou.biz</code></li>
+        <li>Authorized redirect URIs:<br><code id="setup-redirect-uri">https://findyou.biz/assistant/oauth/callback</code></li>
+        <li>Client-ID und Client-Secret unten eintragen und speichern.</li>
+      </ol>
+    </div>
+
+    <div class="setting-row">
+      <label>GOOGLE_CLIENT_ID</label>
+      <input type="text" id="s-GOOGLE_CLIENT_ID" placeholder="xxxx.apps.googleusercontent.com">
+    </div>
+    <div class="setting-row">
+      <label>GOOGLE_CLIENT_SECRET</label>
+      <div class="secret-field">
+        <input type="password" id="s-GOOGLE_CLIENT_SECRET" placeholder="GOCSPX-…">
+        <button type="button" class="toggle-pw" data-for="s-GOOGLE_CLIENT_SECRET">👁</button>
+      </div>
+    </div>
+    <div class="setting-actions">
+      <button id="btn-save-google" class="btn-primary" type="button">💾 Speichern</button>
+      <button id="btn-save-google-login" class="btn-ok" type="button">Speichern &amp; Login</button>
+      <span id="google-setup-result" class="test-result"></span>
+    </div>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <h1>🤖 Assistant</h1>
+    <div id="account-info" class="account-info">Nicht angemeldet</div>
+  </div>
+  <div class="header-actions">
+    <button id="btn-header-login" class="btn-secondary" type="button">Google Login</button>
+    <button id="btn-logout" class="btn-secondary hidden" type="button">Logout</button>
+    <span id="badge-pending" class="badge hidden">0</span>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-tab="calendar" role="tab" aria-selected="true">📅 Kalender</button>
+  <button class="tab" data-tab="todos" role="tab" aria-selected="false">✅ Todos</button>
+  <button class="tab" data-tab="safemode" role="tab" aria-selected="false">🛡️ Freigaben</button>
+  <button class="tab" data-tab="chat" role="tab" aria-selected="false">💬 Chat</button>
+  <button class="tab" data-tab="settings" role="tab" aria-selected="false">⚙️ Einstellungen</button>
+</nav>
+
+<main>
+
+<section id="tab-calendar" class="tab-panel active">
+  <div id="calendar-status" class="status-banner hidden"></div>
+  <div id="calendar-grid" class="calendar-grid">Lädt…</div>
+</section>
+
+<section id="tab-todos" class="tab-panel">
+  <div id="todos-status" class="status-banner hidden"></div>
+  <ul id="todos-list" class="todos-list">Lädt…</ul>
+</section>
+
+<section id="tab-safemode" class="tab-panel">
+  <div id="safemode-status" class="status-banner hidden"></div>
+  <div id="safemode-list" class="safemode-list">Keine ausstehenden Freigaben.</div>
+</section>
+
+<section id="tab-chat" class="tab-panel">
+  <div id="chat-messages" class="chat-messages"></div>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-input" rows="2" placeholder="Schreib mir… z.B. „Was habe ich morgen vor?“ oder „Mach einen Zahnarzt-Termin für Freitag 10:00“"></textarea>
+    <button type="submit">➤</button>
+  </form>
+</section>
+
+<section id="tab-settings" class="tab-panel">
+  <h2>Einstellungen</h2>
+  <p class="hint">Google ist der Login. AI- und Telegram-Konfiguration werden pro Google Account gespeichert.</p>
+
+  <div class="settings-section">
+    <h3>🔐 Google Account</h3>
+    <div id="google-account-box" class="status-banner">Lädt…</div>
+    <div class="setting-actions">
+      <button id="btn-google-auth" class="btn-primary" type="button">Google Account verbinden</button>
+      <button id="btn-open-google-setup" class="btn-secondary" type="button">OAuth App Setup</button>
+      <button id="btn-test-google" class="btn-secondary" type="button">🧪 Google Test</button>
+      <span id="google-test-result" class="test-result"></span>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>🧠 AI <span class="scope-tag">pro Google Account</span></h3>
+    <div class="setting-row">
+      <label>AI_BASE_URL</label>
+      <input type="text" id="s-AI_BASE_URL" placeholder="https://…">
+    </div>
+    <div class="setting-row">
+      <label>AI_API_KEY</label>
+      <div class="secret-field">
+        <input type="password" id="s-AI_API_KEY" placeholder="sk-…">
+        <button type="button" class="toggle-pw" data-for="s-AI_API_KEY">👁</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label>AI_MODEL</label>
+      <input type="text" id="s-AI_MODEL" placeholder="gpt-4o-mini / qwen…">
+    </div>
+    <div class="setting-actions">
+      <button id="btn-save-ai" class="btn-primary" type="button">💾 AI speichern</button>
+      <button id="btn-test-ai" class="btn-secondary" type="button">🧪 Test</button>
+      <span id="ai-test-result" class="test-result"></span>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>📱 Telegram <span class="scope-tag">pro Google Account</span></h3>
+    <div class="setting-row">
+      <label>TELEGRAM_BOT_TOKEN</label>
+      <div class="secret-field">
+        <input type="password" id="s-TELEGRAM_BOT_TOKEN" placeholder="123:abc…">
+        <button type="button" class="toggle-pw" data-for="s-TELEGRAM_BOT_TOKEN">👁</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label>TELEGRAM_ALLOWED_USER_ID</label>
+      <input type="text" id="s-TELEGRAM_ALLOWED_USER_ID" placeholder="123456789">
+    </div>
+    <div class="setting-actions">
+      <button id="btn-save-telegram" class="btn-primary" type="button">💾 Telegram speichern</button>
+      <button id="btn-test-telegram" class="btn-secondary" type="button">🧪 Test</button>
+      <span id="telegram-test-result" class="test-result"></span>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>📋 System-Status</h3>
+    <pre id="system-status">Lädt…</pre>
+    <button id="btn-refresh-status" class="btn-secondary" type="button">🔄 Aktualisieren</button>
+  </div>
+</section>
+
+</main>
+
+<script src="static/app.js"></script>
+</body>
+</html>

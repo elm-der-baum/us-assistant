@@ -1,0 +1,14 @@
+[Unit]
+Description=Assistant Backend
+After=network.target
+
+[Service]
+Type=simple
+User=rdpuser
+WorkingDirectory=/home/rdpuser/assistant
+ExecStart=/usr/bin/python3 /home/rdpuser/assistant/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
