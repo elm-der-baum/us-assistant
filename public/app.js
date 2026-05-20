@@ -336,6 +336,11 @@ async function refreshAfterApproval() {
 
 async function approveAll(count) {
   if (!confirm(`${count} Freigaben wirklich alle ausführen?\n\nEs wird pro betroffenem Bereich nur ein Backup vor der Batch-Ausführung angelegt.`)) return;
+  const bulk = el("safemode-list");
+  if (bulk) {
+    const bar = bulk.querySelector(".bulk-actions");
+    if (bar) bar.innerHTML = `<span class="approval-status status-busy">⏳ Führe ${count} Aktionen aus…</span>`;
+  }
   try {
     const res = await api("POST", "/api/safe-mode/approve-all", {});
     if (res.ok) {
@@ -345,28 +350,58 @@ async function approveAll(count) {
       await refreshAfterApproval();
       alert(`Batch-Freigabe teilweise/komplett fehlgeschlagen: ${res.approved || 0} OK, ${res.failed || 0} Fehler. ${res.error || ""}`);
     }
-  } catch(e) { alert("Fehler: " + e.message); }
+  } catch(e) { alert("Fehler: " + e.message); await loadSafeMode(); }
 }
 
 async function approve(id) {
+  const card = el("act-" + id);
+  if (!card) return;
+  card.classList.add("busy");
+  showApprovalBusy(card, "✅ Wird freigegeben…");
   try {
     const res = await api("POST", "/api/safe-mode/approve", { id });
     if (res.ok) {
+      showApprovalResult(card, "✅ Freigegeben", "ok");
       await refreshAfterApproval();
     } else {
-      alert("Fehler: " + (res.error || "Unbekannt"));
+      showApprovalResult(card, "❌ " + (res.error || "Fehler"), "err");
+      setTimeout(() => loadSafeMode(), 1800);
     }
-  } catch(e) { alert("Fehler: " + e.message); }
+  } catch(e) {
+    showApprovalResult(card, "❌ " + e.message, "err");
+    setTimeout(() => loadSafeMode(), 1800);
+  }
 }
 
 async function reject(id) {
+  const card = el("act-" + id);
+  if (!card) return;
+  card.classList.add("busy");
+  showApprovalBusy(card, "❌ Wird abgelehnt…");
   try {
     const res = await api("POST", "/api/safe-mode/reject", { id });
     if (res.ok) {
+      showApprovalResult(card, "❌ Abgelehnt", "rej");
       await refreshStatus();
-      await loadSafeMode();
+      setTimeout(() => loadSafeMode(), 800);
+    } else {
+      showApprovalResult(card, "❌ " + (res.error || "Fehler"), "err");
+      setTimeout(() => loadSafeMode(), 1800);
     }
-  } catch(e) { alert("Fehler: " + e.message); }
+  } catch(e) {
+    showApprovalResult(card, "❌ " + e.message, "err");
+    setTimeout(() => loadSafeMode(), 1800);
+  }
+}
+
+function showApprovalBusy(card, msg) {
+  const actions = card.querySelector(".action-actions");
+  if (actions) actions.innerHTML = `<span class="approval-status status-busy">${h(msg)}</span>`;
+}
+
+function showApprovalResult(card, msg, cls) {
+  const actions = card.querySelector(".action-actions");
+  if (actions) actions.innerHTML = `<span class="approval-status status-${cls}">${h(msg)}</span>`;
 }
 
 // ---- Chat ----

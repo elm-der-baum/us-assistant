@@ -222,6 +222,15 @@ main {
   border: 1px solid var(--line); background: rgba(64,217,148,.08);
   border-radius: 14px; padding: 12px; margin-bottom: 12px;
 }
+.approval-status {
+  display: inline-block; padding: 6px 14px; border-radius: 999px;
+  font-weight: 700; font-size: 13px;
+}
+.status-busy { background: rgba(124,156,255,.14); color: var(--primary); animation: thinkingPulse 1.8s ease-in-out infinite; }
+.status-ok { background: rgba(64,217,148,.14); color: var(--ok); }
+.status-err { background: rgba(255,107,107,.14); color: var(--danger); }
+.status-rej { background: rgba(255,209,102,.14); color: var(--warn); }
+.action-card.busy { opacity: .65; pointer-events: none; }
 
 /* ---- Buttons / Inputs ---- */
 button, input, textarea { font: inherit; }
