@@ -301,7 +301,7 @@ async function loadSafeMode() {
     const actions = data.actions || [];
     await refreshStatus();
     if (!actions.length) { container.innerHTML = "<p>✅ Keine ausstehenden Freigaben.</p>"; return; }
-    container.innerHTML = actions.map(a => {
+    container.innerHTML = `<div class="bulk-actions"><button id="btn-approve-all" class="btn-ok" type="button">✅ Alle ${actions.length} freigeben</button><span class="action-meta">Legt pro betroffenem Bereich nur ein Backup an.</span></div>` + actions.map(a => {
       const p = a.payload || {};
       const detailLines = Object.entries(p).filter(([k]) => !["calendar_id", "tasklist_id"].includes(k)).map(([k,v]) => `<span class="action-meta">${k}: ${JSON.stringify(v).slice(0,120)}</span>`).join("<br>");
       return `<div class="action-card" id="act-${a.id}">
@@ -314,6 +314,8 @@ async function loadSafeMode() {
         </div>
       </div>`;
     }).join("");
+    const approveAllBtn = el("btn-approve-all");
+    if (approveAllBtn) approveAllBtn.addEventListener("click", () => approveAll(actions.length));
     container.querySelectorAll(".approve-btn").forEach(b => {
       b.addEventListener("click", () => approve(b.dataset.id));
     });
@@ -325,14 +327,32 @@ async function loadSafeMode() {
   }
 }
 
+async function refreshAfterApproval() {
+  await refreshStatus();
+  await loadSafeMode();
+  if (document.getElementById("tab-todos").classList.contains("active")) { await loadTodos(); await loadBackups("tasks"); }
+  if (document.getElementById("tab-calendar").classList.contains("active")) { await loadCalendar(); await loadBackups("calendar"); }
+}
+
+async function approveAll(count) {
+  if (!confirm(`${count} Freigaben wirklich alle ausführen?\n\nEs wird pro betroffenem Bereich nur ein Backup vor der Batch-Ausführung angelegt.`)) return;
+  try {
+    const res = await api("POST", "/api/safe-mode/approve-all", {});
+    if (res.ok) {
+      await refreshAfterApproval();
+      alert(`${res.approved || 0} Aktionen freigegeben.`);
+    } else {
+      await refreshAfterApproval();
+      alert(`Batch-Freigabe teilweise/komplett fehlgeschlagen: ${res.approved || 0} OK, ${res.failed || 0} Fehler. ${res.error || ""}`);
+    }
+  } catch(e) { alert("Fehler: " + e.message); }
+}
+
 async function approve(id) {
   try {
     const res = await api("POST", "/api/safe-mode/approve", { id });
     if (res.ok) {
-      await refreshStatus();
-      await loadSafeMode();
-      if (document.getElementById("tab-todos").classList.contains("active")) { await loadTodos(); await loadBackups("tasks"); }
-      if (document.getElementById("tab-calendar").classList.contains("active")) { await loadCalendar(); await loadBackups("calendar"); }
+      await refreshAfterApproval();
     } else {
       alert("Fehler: " + (res.error || "Unbekannt"));
     }

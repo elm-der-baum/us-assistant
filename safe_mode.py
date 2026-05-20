@@ -64,6 +64,60 @@ def reject(action_id: str, user_email: str | None = None) -> dict[str, Any]:
     return {"ok": True, "action": updated}
 
 
+def approve_all(user_email: str | None = None) -> dict[str, Any]:
+    actions = db.list_pending_actions(include_done=False, limit=500, user_email=user_email)
+    if not actions:
+        return {"ok": True, "approved": 0, "failed": 0, "results": [], "backups": []}
+
+    try:
+        backups = _backup_for_batch(actions, user_email=user_email)
+    except Exception as exc:
+        return {"ok": False, "error": f"Backup fehlgeschlagen: {exc}", "approved": 0, "failed": len(actions), "results": [], "backups": []}
+
+    results: list[dict[str, Any]] = []
+    approved = 0
+    failed = 0
+    for action in actions:
+        action_id = str(action.get("id", ""))
+        try:
+            result = execute(action, user_email=user_email)
+            area = _area_for_action(action)
+            if isinstance(result, dict) and area and area in backups:
+                result.setdefault("backup", backups[area])
+        except Exception as exc:
+            result = {"error": str(exc)}
+
+        if _is_error(result):
+            failed += 1
+            err = _error_text(result)
+            updated = db.update_pending_action(action_id, "error", result=result, error=err, user_email=user_email)
+            results.append({"ok": False, "id": action_id, "error": err, "action": updated})
+        else:
+            approved += 1
+            updated = db.update_pending_action(action_id, "done", result=result, user_email=user_email)
+            results.append({"ok": True, "id": action_id, "result": result, "action": updated})
+
+    return {"ok": failed == 0, "approved": approved, "failed": failed, "results": results, "backups": list(backups.values())}
+
+
+def _area_for_action(action: dict[str, Any]) -> str | None:
+    import backup
+    return backup.area_for_action(str(action.get("type", "")))
+
+
+def _backup_for_batch(actions: list[dict[str, Any]], user_email: str | None = None) -> dict[str, dict[str, Any]]:
+    if not user_email:
+        return {}
+    import backup
+    areas = sorted({area for action in actions if (area := backup.area_for_action(str(action.get("type", ""))))})
+    out: dict[str, dict[str, Any]] = {}
+    for area in areas:
+        area_actions = [a for a in actions if backup.area_for_action(str(a.get("type", ""))) == area]
+        reason = f"Batch-Freigabe ({len(area_actions)} Aktionen)"
+        out[area] = backup.create_backup(area, user_email, reason=reason, action={"type": "approve_all", "count": len(area_actions), "actions": [{"id": a.get("id"), "type": a.get("type"), "title": a.get("title")} for a in area_actions]})
+    return out
+
+
 def _backup_before(action: dict[str, Any], user_email: str | None = None) -> dict[str, Any] | None:
     if not user_email:
         return None

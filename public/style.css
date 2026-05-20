@@ -217,6 +217,11 @@ main {
 .todos-list { list-style: none; padding-left: 14px; }
 .todo-card.done { opacity: .55; text-decoration: line-through; }
 .action-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.bulk-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); background: rgba(64,217,148,.08);
+  border-radius: 14px; padding: 12px; margin-bottom: 12px;
+}
 
 /* ---- Buttons / Inputs ---- */
 button, input, textarea { font: inherit; }

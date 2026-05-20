@@ -766,6 +766,16 @@ def api_safe_mode_approve(handler: Handler) -> None:
     handler._json_ok(safe_mode.approve(action_id, user_email=email))
 
 
+@route("/api/safe-mode/approve-all", methods=["POST"])
+def api_safe_mode_approve_all(handler: Handler) -> None:
+    import safe_mode
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok(safe_mode.approve_all(user_email=email))
+
+
 @route("/api/safe-mode/reject", methods=["POST"])
 def api_safe_mode_reject(handler: Handler) -> None:
     import safe_mode
