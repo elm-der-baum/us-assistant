@@ -497,7 +497,7 @@ def _do_chat_process(email: str, text: str) -> None:
                     + "\n\nBitte im Tab Freigaben prüfen und freigeben."
                 )
             else:
-                reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=user_email)
+                reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=email)
                 if "Safe Mode" in reply or "Freigabe" in reply:
                     reply += "\n\n(Hinweis: Es wurden keine Safe-Mode-Aktionen erstellt – bitte formuliere den Auftrag konkreter.)"
             db.add_chat_message("web", "assistant", reply, user_email=email)
