@@ -321,6 +321,14 @@ def create_tasklist(title: str, email: str | None = None) -> dict[str, Any]:
     return _google_post(f"{GOOGLE_TASKS_API}/users/@me/lists", {"title": title}, email=email)
 
 
+def update_tasklist(tasklist_id: str, title: str, email: str | None = None) -> dict[str, Any]:
+    return _google_patch(f"{GOOGLE_TASKS_API}/users/@me/lists/{tasklist_id}", {"title": title}, email=email)
+
+
+def delete_tasklist(tasklist_id: str, email: str | None = None) -> dict[str, Any]:
+    return _google_delete(f"{GOOGLE_TASKS_API}/users/@me/lists/{tasklist_id}", email=email)
+
+
 def update_task(tasklist_id: str, task_id: str, payload: dict[str, Any], email: str | None = None) -> dict[str, Any]:
     return _google_patch(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks/{task_id}", payload, email=email)
 

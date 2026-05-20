@@ -27,11 +27,12 @@ Regeln:
 
 ACTION_SCHEMA_PROMPT = """Prüfe, ob die Nutzernachricht eine Schreibaktion für Google Calendar oder Google Tasks verlangt.
 
+Wichtig: Schreibaktionen werden NICHT direkt ausgeführt. Du erstellst nur Safe-Mode-Vorschläge.
 Gib ausschließlich gültiges JSON zurück:
 {
   "actions": [
     {
-      "type": "create_calendar_event|update_calendar_event|delete_calendar_event|create_task|update_task|complete_task|delete_task",
+      "type": "create_calendar_event|update_calendar_event|delete_calendar_event|create_task|update_task|complete_task|delete_task|create_tasklist|update_tasklist|delete_tasklist",
       "title": "kurzer deutscher Titel für die Freigabe",
       "payload": { }
     }
@@ -43,8 +44,14 @@ Wenn keine Schreibaktion gewünscht ist: {"actions": []}
 Payload-Regeln:
 - create_calendar_event: payload ist ein Google Calendar Event Body, z.B.
   {"summary":"Zahnarzt", "start":{"dateTime":"2026-05-19T10:00:00+02:00", "timeZone":"Europe/Berlin"}, "end":{"dateTime":"2026-05-19T11:00:00+02:00", "timeZone":"Europe/Berlin"}, "description":"..."}
-- create_task: payload ist ein Google Tasks Task Body, z.B. {"title":"Steuer erledigen", "notes":"...", "due":"2026-05-19T00:00:00.000Z"}
-- Für update/delete brauchst du eine eindeutige ID. Wenn keine ID vorhanden ist, erstelle KEINE Aktion und schreibe reason ins JSON.
+- create_task: IMMER eine Aktion erzeugen, wenn der Nutzer ein Todo/eine Aufgabe anlegen will.
+  Payload ist ein Google Tasks Task Body, z.B. {"title":"Steuer erledigen", "notes":"...", "due":"2026-05-19T00:00:00.000Z", "tasklist_id":"..."}
+  Wenn eine Liste genannt ist, nutze tasklist_id aus dem Kontext. Wenn nur der Listenname bekannt ist, nutze "tasklist_title".
+- update_task/complete_task/delete_task: nutze task_id UND tasklist_id aus dem Kontext. Wenn eine eindeutige Aufgabe genannt ist, erzeuge die Aktion.
+- create_tasklist: payload {"title":"Listenname"}
+- update_tasklist: payload {"tasklist_id":"...", "title":"Neuer Name"}
+- delete_tasklist: payload {"tasklist_id":"..."}
+- Wenn eine ID wirklich nicht eindeutig bestimmbar ist, erstelle KEINE Aktion und schreibe reason ins JSON.
 """
 
 
@@ -209,6 +216,9 @@ def propose_actions(user_text: str, context: str = "", user_email: str | None = 
         "update_task",
         "complete_task",
         "delete_task",
+        "create_tasklist",
+        "update_tasklist",
+        "delete_tasklist",
     }
     for item in actions:
         if not isinstance(item, dict):

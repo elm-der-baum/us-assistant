@@ -145,44 +145,10 @@ def _perform_reject(chat_id: int, action_id: str, user_email: str) -> None:
 
 
 def _exec_action(action: dict[str, Any], user_email: str) -> dict[str, Any]:
-    import google_client as gc
+    import safe_mode
 
     try:
-        action_type = action["type"]
-        if action_type == "create_calendar_event":
-            payload = dict(action["payload"])
-            cal = payload.pop("calendar_id", "primary")
-            return gc.create_event(str(cal), payload, email=user_email)
-        if action_type == "update_calendar_event":
-            payload = dict(action["payload"])
-            cal = payload.pop("calendar_id", "primary")
-            event_id = payload.pop("event_id", "")
-            return gc.update_event(str(cal), str(event_id), payload, email=user_email)
-        if action_type == "delete_calendar_event":
-            payload = action["payload"]
-            cal = payload.get("calendar_id", "primary")
-            event_id = payload.get("event_id", "")
-            return gc.delete_event(str(cal), str(event_id), email=user_email)
-        if action_type == "create_task":
-            payload = dict(action["payload"])
-            tl = payload.pop("tasklist_id", "") or gc.get_tasklist_id(email=user_email) or "@default"
-            return gc.create_task(str(tl), payload, email=user_email)
-        if action_type == "update_task":
-            payload = dict(action["payload"])
-            tl = payload.pop("tasklist_id", "") or gc.get_tasklist_id(email=user_email) or "@default"
-            task_id = payload.pop("task_id", "")
-            return gc.update_task(str(tl), str(task_id), payload, email=user_email)
-        if action_type == "complete_task":
-            payload = dict(action["payload"])
-            tl = payload.pop("tasklist_id", "") or gc.get_tasklist_id(email=user_email) or "@default"
-            task_id = payload.pop("task_id", "")
-            return gc.complete_task(str(tl), str(task_id), email=user_email)
-        if action_type == "delete_task":
-            payload = dict(action["payload"])
-            tl = payload.pop("tasklist_id", "") or gc.get_tasklist_id(email=user_email) or "@default"
-            task_id = payload.pop("task_id", "")
-            return gc.delete_task(str(tl), str(task_id), email=user_email)
-        return {"ok": False, "error": f"Unbekannte Aktion: {action_type}"}
+        return safe_mode.execute(action, user_email=user_email)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -198,6 +164,8 @@ def _build_context(user_email: str) -> str:
         week_start = now.isoformat()
         week_end = (now + timedelta(days=7)).isoformat()
         events = gc.list_events(time_min=week_start, time_max=week_end, email=user_email)
+        tasklists_data = gc.list_tasklists(email=user_email)
+        tasklists = tasklists_data.get("items", [])
         tasks = gc.list_all_tasks(email=user_email)
 
         parts = ["== Kalender (kommende Woche) =="]
@@ -206,19 +174,26 @@ def _build_context(user_email: str) -> str:
             end = ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "?"))
             parts.append(f"- {ev.get('summary','')}: {start} → {end} (ID: {ev.get('id','')})")
 
+        parts.append("== Aufgabenlisten ==")
+        for tl in tasklists:
+            parts.append(f"- {tl.get('title','')} (tasklist_id: {tl.get('id','')})")
+
         parts.append("== Todos ==")
         # Group by list
         lists: dict[str, list[dict[str, Any]]] = {}
-        for t in tasks[:20]:
+        list_ids: dict[str, str] = {}
+        for t in tasks[:40]:
             tl = t.get("_tasklist_title", "Standard")
             lists.setdefault(tl, []).append(t)
+            list_ids[tl] = str(t.get("_tasklist_id", ""))
         for tl_title, tl_tasks in lists.items():
             open_count = sum(1 for t in tl_tasks if t.get("status") != "completed")
-            parts.append(f"\n### {tl_title} ({open_count} offen)")
+            tasklist_id = list_ids.get(tl_title, "")
+            parts.append(f"\n### {tl_title} (tasklist_id: {tasklist_id}; {open_count} offen)")
             for t in tl_tasks:
                 status = t.get("status", "needsAction")
                 status_label = "☐" if status != "completed" else "☑"
-                parts.append(f"- {status_label} {t.get('title','')} (ID: {t.get('id','')})")
+                parts.append(f"- {status_label} {t.get('title','')} (task_id: {t.get('id','')}; tasklist_id: {t.get('_tasklist_id','')})")
 
         return "\n".join(parts)
     except Exception as exc:
