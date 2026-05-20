@@ -853,48 +853,8 @@ def api_chat_context_compact(handler: Handler) -> None:
 # ---------------------------------------------------------------------------
 def _build_context_web(email: str) -> str:
     try:
-        import google_client as gc
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-
-        berlin = ZoneInfo("Europe/Berlin")
-        now = datetime.now(berlin)
-        time_min = now.isoformat()
-        time_max = (now + timedelta(days=14)).isoformat()
-
-        events = gc.list_events(time_min=time_min, time_max=time_max, email=email)
-        tasklists_data = gc.list_tasklists(email=email)
-        tasklists = tasklists_data.get("items", [])
-        tasks = gc.list_all_tasks(email=email)
-
-        parts = ["== Kalender (kommende 14 Tage) =="]
-        for ev in events.get("items", [])[:20]:
-            start = ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", "?"))
-            end = ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "?"))
-            parts.append(f"- {ev.get('summary','')}: {start} → {end} (ID: {ev.get('id','')})")
-
-        parts.append("== Aufgabenlisten ==")
-        for tl in tasklists:
-            parts.append(f"- {tl.get('title','')} (tasklist_id: {tl.get('id','')})")
-
-        parts.append("== Todos ==")
-        # Group by list
-        lists: dict[str, list[dict[str, Any]]] = {}
-        list_ids: dict[str, str] = {}
-        for t in tasks[:50]:
-            tl = t.get("_tasklist_title", "Standard")
-            lists.setdefault(tl, []).append(t)
-            list_ids[tl] = str(t.get("_tasklist_id", ""))
-        for tl_title, tl_tasks in lists.items():
-            open_count = sum(1 for t in tl_tasks if t.get("status") != "completed")
-            tasklist_id = list_ids.get(tl_title, "")
-            parts.append(f"\n### {tl_title} (tasklist_id: {tasklist_id}; {open_count} offen)")
-            for t in tl_tasks:
-                status = t.get("status", "needsAction")
-                status_label = "☐" if status != "completed" else "☑"
-                parts.append(f"- {status_label} {t.get('title','')} (task_id: {t.get('id','')}; tasklist_id: {t.get('_tasklist_id','')})")
-
-        return "\n".join(parts)
+        import context_builder
+        return context_builder.build_google_context(email)
     except Exception:
         return ""
 
