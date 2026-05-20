@@ -502,6 +502,38 @@ def set_chat_context(channel: str, summary: str, user_email: str | None = None) 
     return get_chat_context(channel, user_email=email)
 
 
+def replace_chat_with_compact_summary(channel: str, summary: str, user_email: str | None = None) -> dict[str, Any]:
+    """Persist compact context and make visible chat history match it."""
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        raise ValueError("user_email fehlt")
+    ts = now_ts()
+    msg_id = uuid.uuid4().hex[:16]
+    content = "🧠 Kompakter Kontext:\n" + summary.strip()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_contexts(user_email, channel, summary, last_compacted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_email, channel) DO UPDATE SET
+                summary = excluded.summary,
+                last_compacted_at = excluded.last_compacted_at,
+                updated_at = excluded.updated_at
+            """,
+            (email, channel, summary, ts, ts),
+        )
+        conn.execute(
+            "DELETE FROM chat_messages WHERE channel = ? AND (user_email = ? OR user_email IS NULL)",
+            (channel, email),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages(id, user_email, channel, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (msg_id, email, channel, "assistant", content, ts),
+        )
+    return {"id": msg_id, "user_email": email, "channel": channel, "role": "assistant", "content": content, "created_at": ts}
+
+
 def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),

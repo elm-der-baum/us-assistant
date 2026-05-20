@@ -412,6 +412,8 @@ el("btn-compact-context").addEventListener("click", async () => {
   try {
     const res = await api("POST", "/api/chat/context/compact", {});
     if (res.error) alert("Fehler: " + errorText(res.error));
+    if (res.messages) renderChatMessages(res.messages);
+    else await loadChatMessages();
     await loadChatContextStatus();
   } catch(e) {
     alert("Fehler: " + e.message);

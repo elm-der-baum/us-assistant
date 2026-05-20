@@ -447,7 +447,11 @@ def api_ai_chat(handler: Handler) -> None:
     context = "\n\n".join(context_parts)
     history_limit = 10 if compact_summary else 20
     history = db.recent_chat_messages("web", limit=history_limit, user_email=email)
-    history_mapped = [{"role": h["role"], "content": h["content"]} for h in history[:-1]]
+    history_mapped = [
+        {"role": h["role"], "content": h["content"]}
+        for h in history[:-1]
+        if not str(h.get("content", "")).startswith("🧠 Kompakter Kontext:")
+    ]
 
     try:
         actions = ai_client.propose_actions(text, context, user_email=email)
@@ -828,8 +832,8 @@ def api_chat_context_compact(handler: Handler) -> None:
             handler._json_ok({"ok": True, "summary": ctx.get("summary", ""), **_chat_context_status(email)})
             return
         summary = ai_client.compact_context(str(ctx.get("summary", "")), [{"role": m["role"], "content": m["content"]} for m in messages], user_email=email)
-        db.set_chat_context("web", summary, user_email=email)
-        handler._json_ok({"ok": True, "summary": summary, **_chat_context_status(email)})
+        db.replace_chat_with_compact_summary("web", summary, user_email=email)
+        handler._json_ok({"ok": True, "summary": summary, "messages": db.recent_chat_messages("web", limit=50, user_email=email), **_chat_context_status(email)})
     except Exception as exc:
         handler._json_err(str(exc), 500)
 
@@ -922,7 +926,7 @@ def _auto_compact_if_needed(email: str) -> bool:
     if len(messages) < 12:
         return False
     summary = ai_client.compact_context(str(ctx.get("summary", "")), [{"role": m["role"], "content": m["content"]} for m in messages], user_email=email)
-    db.set_chat_context("web", summary, user_email=email)
+    db.replace_chat_with_compact_summary("web", summary, user_email=email)
     return True
 
 
