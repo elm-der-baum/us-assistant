@@ -299,13 +299,44 @@ async function loadChatMessages() {
   try {
     const data = await api("GET", "/api/chat/messages?channel=web");
     const messages = data.messages || [];
-    if (!messages.length) { msgs.innerHTML = '<div class="msg assistant">Hallo! Ich bin dein Assistent. Frag mich, was heute ansteht, oder sag mir, was ich in Kalender/Todos eintragen soll.</div>'; return; }
-    msgs.innerHTML = messages.map(m => `<div class="msg ${m.role}"><div class="role">${m.role === "user" ? "Du" : "🤖 Assistant"}</div>${md(m.content)}</div>`).join("");
-    msgs.scrollTop = msgs.scrollHeight;
+    renderChatMessages(messages);
     loadChatContextStatus();
   } catch(e) {
     msgs.textContent = "Fehler: " + e.message;
   }
+}
+
+function renderChatMessages(messages) {
+  const msgs = el("chat-messages");
+  if (!messages.length) {
+    msgs.innerHTML = '<div class="msg assistant">Hallo! Ich bin dein Assistent. Frag mich, was heute ansteht, oder sag mir, was ich in Kalender/Todos eintragen soll.</div>';
+    return;
+  }
+  msgs.innerHTML = messages.map(m => chatMessageHtml(m.role, m.content)).join("");
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function chatMessageHtml(role, content) {
+  return `<div class="msg ${role}"><div class="role">${role === "user" ? "Du" : "🤖 Assistant"}</div>${md(content)}</div>`;
+}
+
+function showThinkingIndicator() {
+  const msgs = el("chat-messages");
+  const existing = el("chat-thinking");
+  if (existing) existing.remove();
+  msgs.insertAdjacentHTML("beforeend", `
+    <div id="chat-thinking" class="msg assistant thinking" aria-live="polite">
+      <div class="role">🤖 Assistant</div>
+      <span class="thinking-label">denkt</span>
+      <span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    </div>
+  `);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function hideThinkingIndicator() {
+  const thinking = el("chat-thinking");
+  if (thinking) thinking.remove();
 }
 
 el("chat-input").addEventListener("keydown", (ev) => {
@@ -355,16 +386,27 @@ el("chat-form").addEventListener("submit", async (ev) => {
   if (!text) return;
   input.value = "";
   input.disabled = true;
+  const submitBtn = el("chat-form").querySelector("button[type=submit]");
+  if (submitBtn) submitBtn.disabled = true;
+  const msgs = el("chat-messages");
+  if (msgs) {
+    if (msgs.querySelector(".msg") && !msgs.querySelector(".msg .role")) msgs.innerHTML = "";
+    msgs.insertAdjacentHTML("beforeend", chatMessageHtml("user", text));
+    showThinkingIndicator();
+  }
   try {
     const res = await api("POST", "/api/ai/chat", { text });
     if (res.auto_compacted) console.info("Chat-Kontext automatisch kompaktiert");
+    hideThinkingIndicator();
     await loadChatMessages();
     await loadChatContextStatus();
     await refreshStatus();
   } catch(e) {
+    hideThinkingIndicator();
     alert("Fehler: " + e.message);
   } finally {
     input.disabled = false;
+    if (submitBtn) submitBtn.disabled = false;
     input.focus();
   }
 });
