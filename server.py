@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -430,6 +431,22 @@ def api_ai_chat(handler: Handler) -> None:
         return
 
     db.add_chat_message("web", "user", text, user_email=email)
+    db.set_chat_processing("web", True, user_email=email)
+
+    def _process():
+        try:
+            _do_chat_process(email, text)
+        except Exception:
+            pass
+        finally:
+            db.set_chat_processing("web", False, user_email=email)
+
+    threading.Thread(target=_process, daemon=True).start()
+    handler._json_ok({"status": "processing"})
+
+
+def _do_chat_process(email: str, text: str) -> None:
+    import ai_client, db, safe_mode
 
     auto_compacted = False
     try:
@@ -439,7 +456,7 @@ def api_ai_chat(handler: Handler) -> None:
 
     compact_summary = str(db.get_chat_context("web", user_email=email).get("summary", ""))
     live_context = _build_context_web(email)
-    context_parts = []
+    context_parts: list[str] = []
     if compact_summary:
         context_parts.append("== Kompakter Chat-Kontext ==\n" + compact_summary)
     if live_context:
@@ -469,10 +486,21 @@ def api_ai_chat(handler: Handler) -> None:
         else:
             reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=email)
             db.add_chat_message("web", "assistant", reply, user_email=email)
-        handler._json_ok({"reply": reply, "actions_count": len(actions), "auto_compacted": auto_compacted, "context": _chat_context_status(email)})
     except Exception as exc:
-        handler._json_ok({"reply": f"Fehler: {exc}", "actions_count": 0})
-        db.add_chat_message("web", "assistant", f"Fehler: {exc}", user_email=email)
+        err_msg = f"Fehler: {exc}"
+        if "429" in str(exc) or "Rate-Limit" in str(exc) or "rate" in str(exc).lower():
+            err_msg = "⚠️ Rate-Limit – die KI antwortet zu langsam. Bitte kurz warten und erneut versuchen."
+        db.add_chat_message("web", "assistant", err_msg, user_email=email)
+
+
+@route("/api/chat/pending")
+def api_chat_pending(handler: Handler) -> None:
+    import db
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok({"pending": db.get_chat_processing("web", user_email=email)})
 
 
 @route("/api/ai/test", methods=["POST"])

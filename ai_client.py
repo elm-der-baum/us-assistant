@@ -140,20 +140,32 @@ def chat_completion(messages: list[dict[str, str]], max_tokens: int = 1000, temp
         "max_tokens": max_tokens,
     }
     data = json.dumps(body).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Authorization", f"Bearer {s['api_key']}")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode(errors="replace")
-        raise RuntimeError(f"AI HTTP {exc.code}: {body_text}") from exc
-
-    try:
-        return str(payload["choices"][0]["message"]["content"] or "")
-    except Exception as exc:
-        raise RuntimeError(f"Unerwartete AI-Antwort: {payload}") from exc
+    for attempt in range(2):
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {s['api_key']}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                payload = json.loads(resp.read())
+            return str(payload["choices"][0]["message"]["content"] or "")
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode(errors="replace")
+            if exc.code == 429 and attempt == 0:
+                retry = exc.headers.get("Retry-After", "5")
+                try:
+                    time.sleep(min(float(retry), 30))
+                except ValueError:
+                    time.sleep(5)
+                continue
+            raise RuntimeError(f"AI HTTP {exc.code}: {body_text}") from exc
+        except urllib.error.URLError as exc:
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            raise RuntimeError(f"AI Netzwerkfehler: {exc}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Unerwartete AI-Antwort: {exc}") from exc
+    raise RuntimeError("AI Rate-Limit – bitte in ein paar Sekunden erneut versuchen.")
 
 
 def assistant_reply(user_text: str, context: str = "", history: list[dict[str, str]] | None = None, user_email: str | None = None) -> str:

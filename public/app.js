@@ -413,9 +413,37 @@ async function loadChatMessages() {
     const messages = data.messages || [];
     renderChatMessages(messages);
     loadChatContextStatus();
+    _checkPendingAfterLoad(messages);
   } catch(e) {
     msgs.textContent = "Fehler: " + e.message;
   }
+}
+
+let _pollTimer = 0;
+
+function _checkPendingAfterLoad(messages) {
+  if (messages.length && messages[messages.length - 1].role === "user") {
+    showThinkingIndicator();
+    if (!_pollTimer) _pollTimer = setInterval(_pollChatPending, 1500);
+  } else {
+    hideThinkingIndicator();
+    clearPollTimer();
+  }
+}
+
+function clearPollTimer() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = 0; }
+}
+
+async function _pollChatPending() {
+  try {
+    const s = await api("GET", "/api/chat/pending");
+    if (!s.pending) {
+      clearPollTimer();
+      await loadChatMessages();
+      await loadChatContextStatus();
+    }
+  } catch(e) {}
 }
 
 function renderChatMessages(messages) {
@@ -510,14 +538,17 @@ el("chat-form").addEventListener("submit", async (ev) => {
   }
   try {
     const res = await api("POST", "/api/ai/chat", { text });
-    if (res.auto_compacted) console.info("Chat-Kontext automatisch kompaktiert");
-    hideThinkingIndicator();
-    await loadChatMessages();
-    await loadChatContextStatus();
-    await refreshStatus();
+    if (res.status === "processing") {
+      if (!_pollTimer) _pollTimer = setInterval(_pollChatPending, 1500);
+    } else {
+      clearPollTimer();
+      await loadChatMessages();
+      await loadChatContextStatus();
+    }
   } catch(e) {
     hideThinkingIndicator();
     alert("Fehler: " + e.message);
+    clearPollTimer();
   } finally {
     input.disabled = false;
     if (submitBtn) submitBtn.disabled = false;

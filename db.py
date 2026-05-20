@@ -117,6 +117,7 @@ def init_db() -> None:
         )
         _ensure_column(conn, "pending_actions", "user_email", "user_email TEXT")
         _ensure_column(conn, "chat_messages", "user_email", "user_email TEXT")
+        _ensure_column(conn, "chat_contexts", "processing", "processing INTEGER NOT NULL DEFAULT 0")
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +533,38 @@ def replace_chat_with_compact_summary(channel: str, summary: str, user_email: st
             (msg_id, email, channel, "assistant", content, ts),
         )
     return {"id": msg_id, "user_email": email, "channel": channel, "role": "assistant", "content": content, "created_at": ts}
+
+
+def get_chat_processing(channel: str, user_email: str | None = None) -> bool:
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        return False
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT processing FROM chat_contexts WHERE user_email = ? AND channel = ?",
+            (email, channel),
+        ).fetchone()
+    return bool(int(row["processing"])) if row else False
+
+
+def set_chat_processing(channel: str, pending: bool, user_email: str | None = None) -> None:
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        return
+    ts = now_ts()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_contexts(user_email, channel, summary, last_compacted_at, updated_at, processing)
+            VALUES (?, ?, '', 0, ?, ?)
+            ON CONFLICT(user_email, channel) DO UPDATE SET
+                processing = excluded.processing,
+                updated_at = excluded.updated_at
+            """,
+            (email, channel, ts, int(pending)),
+        )
 
 
 def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
