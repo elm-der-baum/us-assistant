@@ -635,6 +635,36 @@ def api_tasks_import(handler: Handler) -> None:
     handler._json_ok({"created": created, "errors": errors})
 
 
+@route("/api/backups")
+def api_backups(handler: Handler) -> None:
+    import backup
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    area = str(handler._query().get("area", "tasks"))
+    if area not in {"tasks", "calendar"}:
+        handler._json_err("Ungültiger Bereich", 400)
+        return
+    handler._json_ok({"backups": backup.list_backups(area, email)})
+
+
+@route("/api/backups/apply", methods=["POST"])
+def api_backups_apply(handler: Handler) -> None:
+    import backup
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    body = _read_body(handler) or {}
+    area = str(body.get("area", ""))
+    backup_id = str(body.get("id", ""))
+    if area not in {"tasks", "calendar"} or not backup_id:
+        handler._json_err("area/id fehlt", 400)
+        return
+    handler._json_ok(backup.apply_backup(area, backup_id, email))
+
+
 @route("/api/tasks/export/pdf")
 def api_tasks_export_pdf(handler: Handler) -> None:
     import google_client as gc

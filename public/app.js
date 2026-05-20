@@ -12,8 +12,8 @@ document.querySelectorAll(".tab").forEach(btn => {
     btn.classList.add("active");
     btn.setAttribute("aria-selected", "true");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "calendar" && __state.loggedIn) loadCalendar();
-    if (btn.dataset.tab === "todos" && __state.loggedIn) loadTodos();
+    if (btn.dataset.tab === "calendar" && __state.loggedIn) { loadCalendar(); loadBackups("calendar"); }
+    if (btn.dataset.tab === "todos" && __state.loggedIn) { loadTodos(); loadBackups("tasks"); }
     if (btn.dataset.tab === "safemode" && __state.loggedIn) loadSafeMode();
     if (btn.dataset.tab === "chat" && __state.loggedIn) { loadChatMessages(); loadChatContextStatus(); }
     if (btn.dataset.tab === "settings") loadSettings();
@@ -238,6 +238,61 @@ async function loadTodos() {
 }
 
 // ---- Safe Mode ----
+async function loadBackups(area) {
+  if (!__state.loggedIn) return;
+  const box = el(area === "tasks" ? "tasks-backups" : "calendar-backups");
+  if (!box || box.classList.contains("hidden")) return;
+  box.textContent = "Lade Backups…";
+  try {
+    const data = await api("GET", "/api/backups?area=" + encodeURIComponent(area));
+    const backups = data.backups || [];
+    if (!backups.length) {
+      box.innerHTML = "<p class='muted'>Noch keine Backups. Vor der nächsten Änderung wird automatisch eines angelegt.</p>";
+      return;
+    }
+    box.innerHTML = backups.map(b => {
+      const counts = b.counts || {};
+      const countText = area === "tasks"
+        ? `${counts.tasklists || 0} Listen, ${counts.tasks || 0} Tasks`
+        : `${counts.calendars || 0} Kalender, ${counts.events || 0} Termine`;
+      return `<div class="backup-item">
+        <div><strong>${fmtDt(b.created_at || "")}</strong><div class="backup-meta">${h(countText)} · ${h(b.reason || b.action_type || "Backup")}</div></div>
+        <button class="btn-danger btn-sm apply-backup" data-area="${h(area)}" data-id="${h(b.id)}" type="button">Wiederherstellen</button>
+      </div>`;
+    }).join("");
+    box.querySelectorAll(".apply-backup").forEach(btn => {
+      btn.addEventListener("click", () => applyBackup(btn.dataset.area, btn.dataset.id));
+    });
+  } catch(e) {
+    box.textContent = "Fehler: " + e.message;
+  }
+}
+
+async function toggleBackups(area) {
+  const box = el(area === "tasks" ? "tasks-backups" : "calendar-backups");
+  if (!box) return;
+  box.classList.toggle("hidden");
+  if (!box.classList.contains("hidden")) await loadBackups(area);
+}
+
+async function applyBackup(area, id) {
+  const label = area === "tasks" ? "Tasks" : "Kalender";
+  if (!confirm(`${label}-Backup wirklich wiederherstellen?\n\nDas verändert reale Google-Daten. Direkt davor wird automatisch ein Sicherheitsbackup angelegt.`)) return;
+  try {
+    const res = await api("POST", "/api/backups/apply", { area, id });
+    if (!res.ok) {
+      alert("Restore fehlgeschlagen: " + errorText(res.error || res.result || "Unbekannt"));
+      return;
+    }
+    alert("Backup wiederhergestellt. Sicherheitsbackup wurde angelegt.");
+    if (area === "tasks") { await loadTodos(); await loadBackups("tasks"); }
+    if (area === "calendar") { await loadCalendar(); await loadBackups("calendar"); }
+  } catch(e) {
+    alert("Fehler: " + e.message);
+  }
+}
+
+// ---- Safe Mode ----
 async function loadSafeMode() {
   if (!__state.loggedIn) return;
   const container = el("safemode-list");
@@ -276,6 +331,8 @@ async function approve(id) {
     if (res.ok) {
       await refreshStatus();
       await loadSafeMode();
+      if (document.getElementById("tab-todos").classList.contains("active")) { await loadTodos(); await loadBackups("tasks"); }
+      if (document.getElementById("tab-calendar").classList.contains("active")) { await loadCalendar(); await loadBackups("calendar"); }
     } else {
       alert("Fehler: " + (res.error || "Unbekannt"));
     }
@@ -697,6 +754,9 @@ function _exportUrl(format, all, activeListId) {
   el("todos-show-completed").addEventListener("change", () => {
     if (document.getElementById("tab-todos").classList.contains("active")) loadTodos();
   });
+
+  el("btn-calendar-backups").addEventListener("click", () => toggleBackups("calendar"));
+  el("btn-tasks-backups").addEventListener("click", () => toggleBackups("tasks"));
 
   // Export/Import buttons
   el("btn-export-json").addEventListener("click", () => doExport("json"));

@@ -85,6 +85,13 @@
 
 <section id="tab-calendar" class="tab-panel active">
   <div id="calendar-status" class="status-banner hidden"></div>
+  <div class="backup-panel">
+    <div class="backup-head">
+      <strong>📦 Kalender-Backups</strong>
+      <button id="btn-calendar-backups" class="btn-secondary btn-sm" type="button">Backups anzeigen</button>
+    </div>
+    <div id="calendar-backups" class="backup-list hidden"></div>
+  </div>
   <div id="calendar-grid" class="calendar-grid">Lädt…</div>
 </section>
 
@@ -100,6 +107,13 @@
     </div>
   </div>
   <label class="toggle-row"><input type="checkbox" id="todos-show-completed"> Erledigte anzeigen</label>
+  <div class="backup-panel">
+    <div class="backup-head">
+      <strong>📦 Tasks-Backups</strong>
+      <button id="btn-tasks-backups" class="btn-secondary btn-sm" type="button">Backups anzeigen</button>
+    </div>
+    <div id="tasks-backups" class="backup-list hidden"></div>
+  </div>
   <div id="todos-content" class="subtabs-content">Lädt…</div>
 
   <!-- Export Dialog -->
@@ -207,6 +221,6 @@
 
 </main>
 
-<script src="static/app.js?v=12"></script>
+<script src="static/app.js?v=13"></script>
 </body>
 </html>

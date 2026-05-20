@@ -165,6 +165,24 @@ header {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--line);
 }
+.backup-panel {
+  background: rgba(17,26,51,.72);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.backup-head, .backup-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap;
+}
+.backup-list { margin-top: 10px; }
+.backup-item {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+.backup-item:first-child { border-top: 0; }
+.backup-meta, .muted { color: var(--muted); font-size: 13px; }
 
 /* ---- Main ---- */
 main {

@@ -148,7 +148,11 @@ def _exec_action(action: dict[str, Any], user_email: str) -> dict[str, Any]:
     import safe_mode
 
     try:
-        return safe_mode.execute(action, user_email=user_email)
+        backup_meta = safe_mode._backup_before(action, user_email=user_email)
+        result = safe_mode.execute(action, user_email=user_email)
+        if isinstance(result, dict) and backup_meta:
+            result.setdefault("backup", backup_meta)
+        return result
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -291,7 +291,10 @@ def get_tasklist_id(email: str | None = None) -> str | None:
 
 def list_tasks(tasklist_id: str, max_results: int = 100, show_completed: bool = False, email: str | None = None) -> dict[str, Any]:
     params = {"maxResults": str(max_results)}
-    if not show_completed:
+    if show_completed:
+        params["showCompleted"] = "true"
+        params["showHidden"] = "true"
+    else:
         params["showCompleted"] = "false"
     return _google_get(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks", params, email=email)
 

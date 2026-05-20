@@ -40,7 +40,10 @@ def approve(action_id: str, user_email: str | None = None) -> dict[str, Any]:
         return {"ok": False, "error": f"Aktion ist nicht pending: {action['status']}"}
 
     try:
+        backup_meta = _backup_before(action, user_email=user_email)
         result = execute(action, user_email=user_email)
+        if isinstance(result, dict) and backup_meta:
+            result.setdefault("backup", backup_meta)
     except Exception as exc:
         result = {"error": str(exc)}
     if _is_error(result):
@@ -58,6 +61,16 @@ def reject(action_id: str, user_email: str | None = None) -> dict[str, Any]:
         return {"ok": False, "error": "Aktion nicht gefunden"}
     updated = db.update_pending_action(action_id, "rejected", user_email=user_email)
     return {"ok": True, "action": updated}
+
+
+def _backup_before(action: dict[str, Any], user_email: str | None = None) -> dict[str, Any] | None:
+    if not user_email:
+        return None
+    import backup
+    area = backup.area_for_action(str(action.get("type", "")))
+    if not area:
+        return None
+    return backup.create_backup(area, user_email, reason=str(action.get("title", "")), action=action)
 
 
 def execute(action: dict[str, Any], user_email: str | None = None) -> dict[str, Any]:
