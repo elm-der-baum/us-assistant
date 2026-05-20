@@ -32,7 +32,7 @@ Gib ausschließlich gültiges JSON zurück:
 {
   "actions": [
     {
-      "type": "create_calendar_event|update_calendar_event|delete_calendar_event|create_task|update_task|complete_task|delete_task|create_tasklist|update_tasklist|delete_tasklist",
+      "type": "create_calendar_event|update_calendar_event|delete_calendar_event|create_task|update_task|complete_task|delete_task|move_task|create_tasklist|update_tasklist|delete_tasklist",
       "title": "kurzer deutscher Titel für die Freigabe",
       "payload": { }
     }
@@ -48,6 +48,10 @@ Payload-Regeln:
   Payload ist ein Google Tasks Task Body, z.B. {"title":"Steuer erledigen", "notes":"...", "due":"2026-05-19T00:00:00.000Z", "tasklist_id":"..."}
   Wenn eine Liste genannt ist, nutze tasklist_id aus dem Kontext. Wenn nur der Listenname bekannt ist, nutze "tasklist_title".
 - update_task/complete_task/delete_task: nutze task_id UND tasklist_id aus dem Kontext. Wenn eine eindeutige Aufgabe genannt ist, erzeuge die Aktion.
+- move_task: IMMER eine Aktion erzeugen, wenn der Nutzer eine Aufgabe/ein Todo in eine andere Liste verschieben will.
+  Payload: {"task_id":"...", "source_tasklist_id":"...", "target_tasklist_id":"..."}
+  Wenn IDs fehlen, aber Namen eindeutig sind: {"task_title":"Aufgabentitel", "source_tasklist_title":"Quellliste", "target_tasklist_title":"Zielliste"}
+  Synonyme für Verschieben: verschiebe, packe in Liste, tue in Liste, schiebe nach, in andere Liste.
 - create_tasklist: payload {"title":"Listenname"}
 - update_tasklist: payload {"tasklist_id":"...", "title":"Neuer Name"}
 - delete_tasklist: payload {"tasklist_id":"..."}
@@ -216,6 +220,7 @@ def propose_actions(user_text: str, context: str = "", user_email: str | None = 
         "update_task",
         "complete_task",
         "delete_task",
+        "move_task",
         "create_tasklist",
         "update_tasklist",
         "delete_tasklist",

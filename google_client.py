@@ -316,6 +316,10 @@ def list_all_tasks(max_per_list: int = 100, show_completed: bool = False, email:
     return all_tasks
 
 
+def get_task(tasklist_id: str, task_id: str, email: str | None = None) -> dict[str, Any]:
+    return _google_get(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks/{task_id}", email=email)
+
+
 def create_task(tasklist_id: str, payload: dict[str, Any], email: str | None = None) -> dict[str, Any]:
     return _google_post(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks", payload, email=email)
 
