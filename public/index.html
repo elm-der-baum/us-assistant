@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>Assistant</title>
-<link rel="stylesheet" href="static/style.css?v=2">
+<link rel="stylesheet" href="static/style.css?v=4">
 </head>
 <body>
 
@@ -90,7 +90,32 @@
 
 <section id="tab-todos" class="tab-panel">
   <div id="todos-status" class="status-banner hidden"></div>
-  <ul id="todos-list" class="todos-list">Lädt…</ul>
+  <div class="todos-toolbar">
+    <nav id="todos-subtabs" class="subtabs"></nav>
+    <div class="todos-actions">
+      <button id="btn-export-json" class="btn-secondary btn-sm" type="button">📥 JSON</button>
+      <button id="btn-import-json" class="btn-secondary btn-sm" type="button">📤 Import</button>
+      <button id="btn-export-pdf" class="btn-secondary btn-sm" type="button">📄 PDF</button>
+      <input type="file" id="import-file-input" accept=".json" class="hidden">
+    </div>
+  </div>
+  <label class="toggle-row"><input type="checkbox" id="todos-show-completed"> Erledigte anzeigen</label>
+  <div id="todos-content" class="subtabs-content">Lädt…</div>
+
+  <!-- Export Dialog -->
+  <div id="export-dialog" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-sm">
+      <div class="modal-head">
+        <h2>Exportieren</h2>
+        <button id="export-dialog-close" class="btn-secondary" type="button">✕</button>
+      </div>
+      <p style="margin-bottom:18px;color:var(--muted)">Sollen alle Listen oder nur die aktuelle Liste exportiert werden?</p>
+      <div class="setting-actions">
+        <button id="export-dialog-all" class="btn-ok" type="button">📋 Alle Listen</button>
+        <button id="export-dialog-current" class="btn-primary" type="button">📌 Nur aktuelle</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 <section id="tab-safemode" class="tab-panel">
@@ -99,6 +124,10 @@
 </section>
 
 <section id="tab-chat" class="tab-panel">
+  <div class="chat-toolbar">
+    <div id="chat-context-info" class="context-info">Provider/LLM: lädt…</div>
+    <button id="btn-compact-context" class="btn-secondary btn-sm" type="button">🧹 Kontext kompakt</button>
+  </div>
   <div id="chat-messages" class="chat-messages"></div>
   <form id="chat-form" class="chat-form">
     <textarea id="chat-input" rows="2" placeholder="Schreib mir… z.B. „Was habe ich morgen vor?“ oder „Mach einen Zahnarzt-Termin für Freitag 10:00“"></textarea>
@@ -138,6 +167,10 @@
       <label>AI_MODEL</label>
       <input type="text" id="s-AI_MODEL" placeholder="gpt-4o-mini / qwen…">
     </div>
+    <div class="setting-row">
+      <label>AI_CONTEXT_MAX_TOKENS</label>
+      <input type="number" id="s-AI_CONTEXT_MAX_TOKENS" placeholder="Auto (z.B. 128000)">
+    </div>
     <div class="setting-actions">
       <button id="btn-save-ai" class="btn-primary" type="button">💾 AI speichern</button>
       <button id="btn-test-ai" class="btn-secondary" type="button">🧪 Test</button>
@@ -174,6 +207,6 @@
 
 </main>
 
-<script src="static/app.js?v=2"></script>
+<script src="static/app.js?v=11"></script>
 </body>
 </html>

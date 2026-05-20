@@ -1,0 +1,14 @@
+{
+  "build_command": "",
+  "created_at": 1779196637,
+  "description": "KI-gesteuerter Google-Assistent: Kalender, Todos.",
+  "dir": "/home/rdpuser/assistant/",
+  "git_url": "",
+  "id": 6,
+  "name": "assistant",
+  "port": 9400,
+  "schema": 1,
+  "test_command": "",
+  "updated_at": 1779225186,
+  "url_path": "/assistant/"
+}

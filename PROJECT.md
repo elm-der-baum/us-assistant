@@ -5,14 +5,14 @@ KI-gesteuerter Google-Assistent: Kalender, Todos.
 Kontrollierter Schreibzugriff über Safe-Mode-Genehmigung.
 
 ## Tech
-- Backend: Python 3.12 stdlib (http.server, urllib, sqlite3)
+- Backend: Python 3.12 (http.server, urllib, sqlite3) + fpdf2 für PDF-Export
 - Frontend: Vanilla JS, CSS
 - Auth: Google OAuth2 → Session-Cookie (`assistant_sid`, 30 Tage)
 - KI: OpenAI-compatible API
 - Chat: Web-UI + Telegram Long Polling
 - DB: SQLite (users, sessions, user_settings, pending_actions, chat_messages + system settings)
 - Port: 9400
-- Keine externen Python-Abhängigkeiten
+- Externe Python-Abhängigkeit: `fpdf2` (PDF-Export)
 
 ## Start
 ```bash

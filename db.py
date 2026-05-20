@@ -104,6 +104,15 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_chat_messages_user_channel_created
             ON chat_messages(user_email, channel, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS chat_contexts (
+                user_email TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                last_compacted_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY(user_email, channel)
+            );
             """
         )
         _ensure_column(conn, "pending_actions", "user_email", "user_email TEXT")
@@ -457,6 +466,40 @@ def recent_chat_messages(channel: str, limit: int = 20, user_email: str | None =
     messages = [dict(row) for row in rows]
     messages.reverse()
     return messages
+
+
+def get_chat_context(channel: str = "web", user_email: str | None = None) -> dict[str, Any]:
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        return {"summary": "", "last_compacted_at": 0, "updated_at": 0}
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM chat_contexts WHERE user_email = ? AND channel = ?",
+            (email, channel),
+        ).fetchone()
+    return dict(row) if row else {"summary": "", "last_compacted_at": 0, "updated_at": 0}
+
+
+def set_chat_context(channel: str, summary: str, user_email: str | None = None) -> dict[str, Any]:
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        raise ValueError("user_email fehlt")
+    ts = now_ts()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_contexts(user_email, channel, summary, last_compacted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_email, channel) DO UPDATE SET
+                summary = excluded.summary,
+                last_compacted_at = excluded.last_compacted_at,
+                updated_at = excluded.updated_at
+            """,
+            (email, channel, summary, ts, ts),
+        )
+    return get_chat_context(channel, user_email=email)
 
 
 def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

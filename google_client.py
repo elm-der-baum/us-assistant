@@ -289,12 +289,36 @@ def get_tasklist_id(email: str | None = None) -> str | None:
     return None
 
 
-def list_tasks(tasklist_id: str, max_results: int = 100, email: str | None = None) -> dict[str, Any]:
-    return _google_get(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks", {"maxResults": str(max_results)}, email=email)
+def list_tasks(tasklist_id: str, max_results: int = 100, show_completed: bool = False, email: str | None = None) -> dict[str, Any]:
+    params = {"maxResults": str(max_results)}
+    if not show_completed:
+        params["showCompleted"] = "false"
+    return _google_get(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks", params, email=email)
+
+
+def list_all_tasks(max_per_list: int = 100, show_completed: bool = False, email: str | None = None) -> list[dict[str, Any]]:
+    """Aggregate tasks from ALL tasklists, each annotated with its list title."""
+    all_tasks: list[dict[str, Any]] = []
+    tasklists = list_tasklists(email=email)
+    for tl in tasklists.get("items", []):
+        tl_id = str(tl.get("id", ""))
+        tl_title = str(tl.get("title", tl_id))
+        if not tl_id:
+            continue
+        result = list_tasks(tl_id, max_results=max_per_list, show_completed=show_completed, email=email)
+        for t in result.get("items", []):
+            t["_tasklist_title"] = tl_title
+            t["_tasklist_id"] = tl_id
+            all_tasks.append(t)
+    return all_tasks
 
 
 def create_task(tasklist_id: str, payload: dict[str, Any], email: str | None = None) -> dict[str, Any]:
     return _google_post(f"{GOOGLE_TASKS_API}/lists/{tasklist_id}/tasks", payload, email=email)
+
+
+def create_tasklist(title: str, email: str | None = None) -> dict[str, Any]:
+    return _google_post(f"{GOOGLE_TASKS_API}/users/@me/lists", {"title": title}, email=email)
 
 
 def update_task(tasklist_id: str, task_id: str, payload: dict[str, Any], email: str | None = None) -> dict[str, Any]:

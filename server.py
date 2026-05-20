@@ -9,6 +9,7 @@ import sys
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 PORT = int(os.environ.get("ASSISTANT_PORT", "9400"))
@@ -261,7 +262,7 @@ def api_get_settings(handler: Handler) -> None:
     APP_KEYS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
 
-    USER_KEYS = ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
+    USER_KEYS = ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     db.init_db()
@@ -290,7 +291,7 @@ def api_save_settings(handler: Handler) -> None:
 
     APP_KEYS = {"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"}
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
-    USER_KEYS = {"AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
+    USER_KEYS = {"AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     app_vals: dict[str, str] = {}
@@ -430,8 +431,22 @@ def api_ai_chat(handler: Handler) -> None:
 
     db.add_chat_message("web", "user", text, user_email=email)
 
-    context = _build_context_web(email)
-    history = db.recent_chat_messages("web", limit=20, user_email=email)
+    auto_compacted = False
+    try:
+        auto_compacted = _auto_compact_if_needed(email)
+    except Exception:
+        auto_compacted = False
+
+    compact_summary = str(db.get_chat_context("web", user_email=email).get("summary", ""))
+    live_context = _build_context_web(email)
+    context_parts = []
+    if compact_summary:
+        context_parts.append("== Kompakter Chat-Kontext ==\n" + compact_summary)
+    if live_context:
+        context_parts.append(live_context)
+    context = "\n\n".join(context_parts)
+    history_limit = 10 if compact_summary else 20
+    history = db.recent_chat_messages("web", limit=history_limit, user_email=email)
     history_mapped = [{"role": h["role"], "content": h["content"]} for h in history[:-1]]
 
     try:
@@ -450,7 +465,7 @@ def api_ai_chat(handler: Handler) -> None:
         else:
             reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=email)
             db.add_chat_message("web", "assistant", reply, user_email=email)
-        handler._json_ok({"reply": reply, "actions_count": len(actions)})
+        handler._json_ok({"reply": reply, "actions_count": len(actions), "auto_compacted": auto_compacted, "context": _chat_context_status(email)})
     except Exception as exc:
         handler._json_ok({"reply": f"Fehler: {exc}", "actions_count": 0})
         db.add_chat_message("web", "assistant", f"Fehler: {exc}", user_email=email)
@@ -511,8 +526,182 @@ def api_tasks(handler: Handler) -> None:
     if not email:
         handler._json_err("Nicht eingeloggt", 401)
         return
-    tl = str(handler._query().get("tasklist", "")) or gc.get_tasklist_id(email=email) or "@default"
-    handler._json_ok(gc.list_tasks(tl, email=email))
+    tl = str(handler._query().get("tasklist", ""))
+    show_completed = handler._query().get("show_completed", "") == "1"
+    if tl:
+        handler._json_ok(gc.list_tasks(tl, show_completed=show_completed, email=email))
+    else:
+        handler._json_ok({"items": gc.list_all_tasks(show_completed=show_completed, email=email)})
+
+
+@route("/api/tasks/export")
+def api_tasks_export(handler: Handler) -> None:
+    import google_client as gc
+    from datetime import datetime, timezone
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    lists_data = gc.list_tasklists(email=email)
+    show_completed = handler._query().get("show_completed", "") == "1"
+    filter_tl = str(handler._query().get("tasklist", ""))
+    export = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "email": email,
+        "tasklists": []
+    }
+    for tl in lists_data.get("items", []):
+        tl_id = str(tl.get("id", ""))
+        tl_title = str(tl.get("title", tl_id))
+        if not tl_id:
+            continue
+        if filter_tl and tl_id != filter_tl:
+            continue
+        tasks = gc.list_tasks(tl_id, max_results=500, show_completed=show_completed, email=email)
+        export["tasklists"].append({
+            "title": tl_title,
+            "id": tl_id,
+            "tasks": tasks.get("items", [])
+        })
+    body = json.dumps(export, ensure_ascii=False, indent=2)
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Disposition", "attachment; filename=tasks-export.json")
+    handler.send_header("Content-Length", str(len(body.encode())))
+    handler.end_headers()
+    handler.wfile.write(body.encode())
+
+
+@route("/api/tasks/import", methods=["POST"])
+def api_tasks_import(handler: Handler) -> None:
+    import google_client as gc
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    body = _read_body(handler)
+    if not body:
+        handler._json_err("Keine Daten", 400)
+        return
+    try:
+        data = json.loads(body) if isinstance(body, str) else body
+    except json.JSONDecodeError:
+        handler._json_err("Ungültiges JSON", 400)
+        return
+    if not isinstance(data, dict) or "tasklists" not in data:
+        handler._json_err('JSON muss {"tasklists": [...]} enthalten', 400)
+        return
+    # Build existing-list index by title
+    existing = gc.list_tasklists(email=email)
+    list_by_title: dict[str, str] = {}
+    list_by_id: dict[str, str] = {}
+    for tl in existing.get("items", []):
+        list_by_title[str(tl.get("title", "")).lower()] = str(tl.get("id", ""))
+        list_by_id[str(tl.get("id", ""))] = str(tl.get("id", ""))
+    created = 0
+    errors = 0
+    for tl_data in data.get("tasklists", []):
+        tl_title = str(tl_data.get("title", ""))
+        tl_id = tl_data.get("id", "")
+        # Find or create list
+        actual_id = list_by_id.get(str(tl_id)) or list_by_title.get(tl_title.lower())
+        if not actual_id:
+            if tl_title:
+                new_list = gc.create_tasklist(tl_title, email=email)
+                actual_id = new_list.get("id", "")
+                if actual_id:
+                    list_by_title[tl_title.lower()] = actual_id
+            if not actual_id:
+                # fallback to first list
+                actual_id = gc.get_tasklist_id(email=email)
+        if not actual_id:
+            errors += len(tl_data.get("tasks", []))
+            continue
+        for task in tl_data.get("tasks", []):
+            try:
+                payload = {
+                    "title": str(task.get("title", "Unbenannt")),
+                }
+                if task.get("notes"):
+                    payload["notes"] = str(task["notes"])
+                if task.get("due"):
+                    payload["due"] = str(task["due"])
+                if task.get("status") == "completed":
+                    payload["status"] = "completed"
+                gc.create_task(actual_id, payload, email=email)
+                created += 1
+            except Exception:
+                errors += 1
+    handler._json_ok({"created": created, "errors": errors})
+
+
+@route("/api/tasks/export/pdf")
+def api_tasks_export_pdf(handler: Handler) -> None:
+    import google_client as gc
+    from fpdf import FPDF
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+
+    def _safe(s: str) -> str:
+        return s.encode("latin-1", errors="replace").decode("latin-1")
+
+    show_completed = handler._query().get("show_completed", "") == "1"
+    filter_tl = str(handler._query().get("tasklist", ""))
+    lists_data = gc.list_tasklists(email=email)
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    # Title
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Google Tasks Export", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Helvetica", "I", 9)
+    from datetime import datetime, timezone
+    pdf.cell(0, 6, datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(4)
+    for tl in lists_data.get("items", []):
+        tl_id = str(tl.get("id", ""))
+        if filter_tl and tl_id != filter_tl:
+            continue
+        tl_title = _safe(str(tl.get("title", "")))
+        tasks = gc.list_tasks(str(tl.get("id", "")), max_results=500, show_completed=show_completed, email=email)
+        items = tasks.get("items", [])
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_fill_color(230, 235, 250)
+        count_open = sum(1 for t in items if t.get("status") != "completed")
+        pdf.cell(0, 9, f"{tl_title}  ({count_open} offen)", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 10)
+        for t in items:
+            done = t.get("status") == "completed"
+            checkbox = "[x]" if done else "[ ]"
+            title = _safe(str(t.get("title", "")))
+            notes = _safe(str(t.get("notes", "")))
+            due = str(t.get("due", ""))
+            pdf.set_font("Helvetica", "B" if done else "", 10)
+            line = f"{checkbox} {title}"
+            if due:
+                try:
+                    from datetime import datetime as dt
+                    d = dt.fromisoformat(due.replace("Z", ""))
+                    line += f"  (fällig: {d.strftime('%d.%m.%Y')})"
+                except Exception:
+                    line += f"  ({due})"
+            pdf.cell(0, 6, line, new_x="LMARGIN", new_y="NEXT")
+            if notes:
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.set_text_color(100, 100, 100)
+                pdf.cell(0, 5, f"     {notes}", new_x="LMARGIN", new_y="NEXT")
+                pdf.set_text_color(0, 0, 0)
+        pdf.ln(5)
+    pdf_bytes = pdf.output()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/pdf")
+    handler.send_header("Content-Disposition", "attachment; filename=tasks-export.pdf")
+    handler.send_header("Content-Length", str(len(pdf_bytes)))
+    handler.end_headers()
+    handler.wfile.write(pdf_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +775,35 @@ def api_chat_messages(handler: Handler) -> None:
     handler._json_ok({"messages": db.recent_chat_messages(channel, limit=50, user_email=email)})
 
 
+@route("/api/chat/context/status")
+def api_chat_context_status(handler: Handler) -> None:
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok(_chat_context_status(email))
+
+
+@route("/api/chat/context/compact", methods=["POST"])
+def api_chat_context_compact(handler: Handler) -> None:
+    import db, ai_client
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    try:
+        ctx = db.get_chat_context("web", user_email=email)
+        messages = db.recent_chat_messages("web", limit=80, user_email=email)
+        if not messages:
+            handler._json_ok({"ok": True, "summary": ctx.get("summary", ""), **_chat_context_status(email)})
+            return
+        summary = ai_client.compact_context(str(ctx.get("summary", "")), [{"role": m["role"], "content": m["content"]} for m in messages], user_email=email)
+        db.set_chat_context("web", summary, user_email=email)
+        handler._json_ok({"ok": True, "summary": summary, **_chat_context_status(email)})
+    except Exception as exc:
+        handler._json_err(str(exc), 500)
+
+
 # ---------------------------------------------------------------------------
 # Context builder
 # ---------------------------------------------------------------------------
@@ -601,7 +819,7 @@ def _build_context_web(email: str) -> str:
         time_max = (now + timedelta(days=14)).isoformat()
 
         events = gc.list_events(time_min=time_min, time_max=time_max, email=email)
-        tasks = gc.list_tasks(gc.get_tasklist_id(email=email) or "@default", email=email)
+        tasks = gc.list_all_tasks(email=email)
 
         parts = ["== Kalender (kommende 14 Tage) =="]
         for ev in events.get("items", [])[:20]:
@@ -610,13 +828,63 @@ def _build_context_web(email: str) -> str:
             parts.append(f"- {ev.get('summary','')}: {start} → {end} (ID: {ev.get('id','')})")
 
         parts.append("== Todos ==")
-        for t in tasks.get("items", [])[:30]:
-            status = t.get("status", "needsAction")
-            parts.append(f"- [{status}] {t.get('title','')} (ID: {t.get('id','')})")
+        # Group by list
+        lists: dict[str, list[dict[str, Any]]] = {}
+        for t in tasks[:30]:
+            tl = t.get("_tasklist_title", "Standard")
+            lists.setdefault(tl, []).append(t)
+        for tl_title, tl_tasks in lists.items():
+            open_count = sum(1 for t in tl_tasks if t.get("status") != "completed")
+            parts.append(f"\n### {tl_title} ({open_count} offen)")
+            for t in tl_tasks:
+                status = t.get("status", "needsAction")
+                status_label = "☐" if status != "completed" else "☑"
+                parts.append(f"- {status_label} {t.get('title','')} (ID: {t.get('id','')})")
 
         return "\n".join(parts)
     except Exception:
         return ""
+
+
+def _chat_context_status(email: str) -> dict[str, Any]:
+    import ai_client, db
+    info = ai_client.context_info(email)
+    summary = db.get_chat_context("web", user_email=email)
+    messages = db.recent_chat_messages("web", limit=50, user_email=email)
+    chat_text = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+    summary_text = str(summary.get("summary", ""))
+    google_context = _build_context_web(email)
+    used_tokens = ai_client.estimate_tokens(SYSTEM_PROMPT_STATUS + summary_text + chat_text + google_context)
+    max_tokens = int(info.get("max_tokens") or 0)
+    pct = round((used_tokens / max_tokens) * 100, 1) if max_tokens else 0
+    return {
+        "provider": info.get("provider", "Unbekannt"),
+        "model": info.get("model", "Nicht gesetzt"),
+        "configured": bool(info.get("configured")),
+        "used_tokens": used_tokens,
+        "max_tokens": max_tokens,
+        "used_percent": pct,
+        "auto_compact_at_percent": 80,
+        "summary_chars": len(summary_text),
+        "last_compacted_at": int(summary.get("last_compacted_at") or 0),
+    }
+
+
+SYSTEM_PROMPT_STATUS = "Du bist der persönliche Assistent des Nutzers. Aktueller Kontext und Chatverlauf."
+
+
+def _auto_compact_if_needed(email: str) -> bool:
+    import db, ai_client
+    status = _chat_context_status(email)
+    if float(status.get("used_percent", 0)) < 80:
+        return False
+    ctx = db.get_chat_context("web", user_email=email)
+    messages = db.recent_chat_messages("web", limit=80, user_email=email)
+    if len(messages) < 12:
+        return False
+    summary = ai_client.compact_context(str(ctx.get("summary", "")), [{"role": m["role"], "content": m["content"]} for m in messages], user_email=email)
+    db.set_chat_context("web", summary, user_email=email)
+    return True
 
 
 # ---------------------------------------------------------------------------

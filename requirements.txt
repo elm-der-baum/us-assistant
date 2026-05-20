@@ -1,3 +1,2 @@
-# Keine externen Abhängigkeiten – nur Python 3.12 stdlib.
-# python3 -m venv venv && source venv/bin/activate
-# python3 server.py
+# Runtime: Python 3.12 stdlib + PDF export dependency.
+fpdf2>=2.8.0

@@ -10,7 +10,7 @@
 ## Entscheidungen
 - Name: `assistant`
 - Port: `9400`
-- Backend ohne externe Dependencies: Python stdlib + SQLite.
+- Backend: Python stdlib + SQLite; `fpdf2` für PDF-Export.
 - Google OAuth: Session-Cookie (`assistant_sid`, 30 Tage), kein Passwort-Login nötig.
 - Google OAuth App (Client-ID/Secret) systemweit konfigurierbar – danach Login mit beliebigem Google-Konto möglich.
 - Persönliche Settings (AI, Telegram) pro Google-Email gespeichert.

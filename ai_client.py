@@ -7,6 +7,7 @@ import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from typing import Any
@@ -68,6 +69,53 @@ def configured(user_email: str | None = None) -> bool:
     return bool(s["base_url"] and s["api_key"] and s["model"])
 
 
+def estimate_tokens(text: str) -> int:
+    return max(0, (len(text or "") + 3) // 4)
+
+
+def provider_name(user_email: str | None = None) -> str:
+    base_url = _settings(user_email)["base_url"]
+    host = urllib.parse.urlparse(base_url).netloc.lower()
+    if "openai" in host:
+        return "OpenAI"
+    if "anthropic" in host:
+        return "Anthropic"
+    if "groq" in host:
+        return "Groq"
+    if "openrouter" in host:
+        return "OpenRouter"
+    if "localhost" in host or "127.0.0.1" in host or "ollama" in host:
+        return "Ollama"
+    return host or "Unbekannt"
+
+
+def model_name(user_email: str | None = None) -> str:
+    return _settings(user_email)["model"] or "Nicht gesetzt"
+
+
+def model_context_max(user_email: str | None = None) -> int:
+    override = get_user_setting(user_email, "AI_CONTEXT_MAX_TOKENS", "") if user_email else ""
+    if override and str(override).isdigit():
+        return int(str(override))
+    model = model_name(user_email).lower()
+    if any(k in model for k in ["gpt-4.1", "gpt-4o", "o3", "o4", "gemini", "claude-3.5", "claude-3-5"]):
+        return 128000
+    if any(k in model for k in ["qwen", "llama3.1", "llama-3.1", "mistral-large"]):
+        return 128000
+    if any(k in model for k in ["llama", "mistral", "mixtral"]):
+        return 32000
+    return 128000
+
+
+def context_info(user_email: str | None = None) -> dict[str, Any]:
+    return {
+        "provider": provider_name(user_email),
+        "model": model_name(user_email),
+        "max_tokens": model_context_max(user_email),
+        "configured": configured(user_email),
+    }
+
+
 def chat_completion(messages: list[dict[str, str]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
@@ -106,6 +154,28 @@ def assistant_reply(user_text: str, context: str = "", history: list[dict[str, s
             messages.append({"role": str(msg["role"]), "content": str(msg.get("content", ""))})
     messages.append({"role": "user", "content": user_text})
     return chat_completion(messages, user_email=user_email)
+
+
+def compact_context(existing_summary: str, messages: list[dict[str, str]], user_email: str | None = None) -> str:
+    transcript = "\n".join(f"{m.get('role','?')}: {m.get('content','')}" for m in messages)
+    prompt = (
+        "Kompaktiere den bisherigen Chat-Kontext für spätere Antworten. "
+        "Bewahre Nutzerpräferenzen, offene Aufgaben, Zusagen, wichtige Fakten, Kalender/Todo-Bezüge und Entscheidungen. "
+        "Entferne Wiederholungen und irrelevante Details. Antworte nur mit der kompakten Zusammenfassung auf Deutsch."
+    )
+    content = ""
+    if existing_summary:
+        content += f"Bisherige kompakte Zusammenfassung:\n{existing_summary}\n\n"
+    content += f"Chat-Transkript:\n{transcript}"
+    return chat_completion(
+        [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": content[:60000]},
+        ],
+        max_tokens=1800,
+        temperature=0.1,
+        user_email=user_email,
+    ).strip()
 
 
 def propose_actions(user_text: str, context: str = "", user_email: str | None = None) -> list[dict[str, Any]]:

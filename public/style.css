@@ -56,6 +56,7 @@ html, body {
   padding: 28px;
   max-width: 640px; width: 100%;
 }
+.modal-sm { max-width: 380px; }
 .modal-head {
   display: flex;
   justify-content: space-between;
@@ -120,6 +121,51 @@ header {
 }
 .tab.active { background: var(--primary); color: #071021; font-weight: 700; }
 
+/* ---- Subtabs ---- */
+.subtabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 0;
+}
+.subtab {
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  white-space: nowrap;
+}
+.subtab.active { background: var(--primary-2); color: #fff; font-weight: 700; border-color: var(--primary-2); }
+.todos-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+}
+.todos-actions {
+  display: flex; gap: 6px; flex-shrink: 0;
+}
+.btn-sm {
+  font-size: 12px; padding: 6px 10px; border-radius: 8px;
+}
+.subtabs-content {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.toggle-row {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--muted); font-size: 13px; cursor: pointer;
+  padding: 6px 0 8px 0;
+}
+.toggle-row input[type="checkbox"] {
+  accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer;
+}
+.list-heading {
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
 /* ---- Main ---- */
 main {
   width: min(1100px, 100%); margin: 0 auto; padding: 14px;
@@ -165,8 +211,22 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .btn-ok { background: var(--ok); color: #06160f; font-weight: 700; }
 
 /* ---- Chat ---- */
+.chat-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; margin-bottom: 8px;
+}
+.context-info {
+  color: var(--muted);
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  flex: 1 1 320px;
+}
+.context-info.warn { border-color: var(--warn); color: var(--warn); }
 .chat-messages {
-  min-height: 45vh; max-height: calc(100vh - 240px); overflow-y: auto; margin-bottom: 12px;
+  min-height: 45vh; max-height: calc(100vh - 280px); overflow-y: auto; margin-bottom: 12px;
 }
 .msg { white-space: pre-wrap; }
 .msg.user { margin-left: 10%; background: #20356c; }

@@ -15,7 +15,7 @@ document.querySelectorAll(".tab").forEach(btn => {
     if (btn.dataset.tab === "calendar" && __state.loggedIn) loadCalendar();
     if (btn.dataset.tab === "todos" && __state.loggedIn) loadTodos();
     if (btn.dataset.tab === "safemode" && __state.loggedIn) loadSafeMode();
-    if (btn.dataset.tab === "chat" && __state.loggedIn) loadChatMessages();
+    if (btn.dataset.tab === "chat" && __state.loggedIn) { loadChatMessages(); loadChatContextStatus(); }
     if (btn.dataset.tab === "settings") loadSettings();
   });
 });
@@ -150,28 +150,90 @@ async function loadCalendar() {
 }
 
 // ---- Todos ----
+let __todoLists = []; // [ { id, title } ]
+
 async function loadTodos() {
   if (!__state.loggedIn) return;
-  const list = el("todos-list");
   const status = el("todos-status");
-  list.innerHTML = "Lade Todos…";
+  const subtabs = el("todos-subtabs");
+  const content = el("todos-content");
+
+  // First, fetch task lists
   try {
-    const data = await api("GET", "/api/tasks");
+    const listsData = await api("GET", "/api/tasks/lists");
+    __todoLists = (listsData.items || []).map(l => ({ id: l.id, title: l.title || l.id }));
+  } catch(e) {
+    status.textContent = "Fehler beim Laden der Listen";
+    status.classList.remove("hidden");
+    return;
+  }
+
+  // Build subtabs
+  subtabs.innerHTML = "";
+  const activeListId = subtabs.dataset.active || (__todoLists[0] ? __todoLists[0].id : "");
+
+  for (const tl of __todoLists) {
+    const btn = document.createElement("button");
+    btn.className = "subtab" + (tl.id === activeListId ? " active" : "");
+    btn.textContent = tl.title;
+    btn.addEventListener("click", () => {
+      subtabs.dataset.active = tl.id;
+      loadTodos();
+    });
+    subtabs.appendChild(btn);
+  }
+
+  if (__todoLists.length > 1) {
+    const allBtn = document.createElement("button");
+    allBtn.className = "subtab" + (activeListId === "__all__" ? " active" : "");
+    allBtn.textContent = "Alle";
+    allBtn.addEventListener("click", () => {
+      subtabs.dataset.active = "__all__";
+      loadTodos();
+    });
+    subtabs.appendChild(allBtn);
+  }
+
+  // Fetch tasks for selected list
+  content.innerHTML = "Lade Todos…";
+  try {
+    const showCompleted = el("todos-show-completed").checked;
+    let tlParam = activeListId && activeListId !== "__all__" ? ("?tasklist=" + encodeURIComponent(activeListId)) : "";
+    tlParam += (tlParam ? "&" : "?") + "show_completed=" + (showCompleted ? "1" : "0");
+    const data = await api("GET", "/api/tasks" + tlParam);
     if (data.error) {
       status.textContent = errorText(data.error);
       status.classList.remove("hidden");
-      list.innerHTML = "";
+      content.innerHTML = "";
       return;
     }
     status.classList.add("hidden");
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) { list.innerHTML = "Keine Todos gefunden."; return; }
-    list.innerHTML = items.map(t => {
-      const done = t.status === "completed";
-      return `<li class="todo-card ${done ? "done" : ""}"><span class="todo-title">${done ? "☑" : "☐"} ${h(t.title || "Ohne Titel")}</span>${t.notes ? '<div class="todo-meta">' + h(t.notes) + '</div>' : ''}</li>`;
-    }).join("");
+    if (!items.length) { content.innerHTML = "<p style='color:var(--muted)'>Keine offenen Todos.</p>"; return; }
+
+    // If "Alle", group by list
+    if (activeListId === "__all__") {
+      const groups = {};
+      for (const t of items) {
+        const tlTitle = t._tasklist_title || "Standard";
+        groups[tlTitle] = groups[tlTitle] || [];
+        groups[tlTitle].push(t);
+      }
+      content.innerHTML = Object.entries(groups).map(([title, tasks]) => {
+        const taskItems = tasks.map(t => {
+          const done = t.status === "completed";
+          return `<li class="todo-card ${done ? "done" : ""}"><span class="todo-title">${done ? "☑" : "☐"} ${h(t.title || "Ohne Titel")}</span>${t.notes ? '<div class="todo-meta">' + h(t.notes) + '</div>' : ''}</li>`;
+        }).join("");
+        return `<div class="list-heading">📋 ${h(title)}</div><ul class="todos-list">${taskItems}</ul>`;
+      }).join("");
+    } else {
+      content.innerHTML = `<ul class="todos-list">${items.map(t => {
+        const done = t.status === "completed";
+        return `<li class="todo-card ${done ? "done" : ""}"><span class="todo-title">${done ? "☑" : "☐"} ${h(t.title || "Ohne Titel")}</span>${t.notes ? '<div class="todo-meta">' + h(t.notes) + '</div>' : ''}</li>`;
+      }).join("")}</ul>`;
+    }
   } catch(e) {
-    list.textContent = "Fehler: " + e.message;
+    content.textContent = "Fehler: " + e.message;
   }
 }
 
@@ -240,8 +302,48 @@ async function loadChatMessages() {
     if (!messages.length) { msgs.innerHTML = '<div class="msg assistant">Hallo! Ich bin dein Assistent. Frag mich, was heute ansteht, oder sag mir, was ich in Kalender/Todos eintragen soll.</div>'; return; }
     msgs.innerHTML = messages.map(m => `<div class="msg ${m.role}"><div class="role">${m.role === "user" ? "Du" : "🤖 Assistant"}</div>${md(m.content)}</div>`).join("");
     msgs.scrollTop = msgs.scrollHeight;
+    loadChatContextStatus();
   } catch(e) {
     msgs.textContent = "Fehler: " + e.message;
+  }
+}
+
+el("chat-input").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && ev.ctrlKey) {
+    ev.preventDefault();
+    el("chat-form").requestSubmit();
+  }
+});
+
+el("btn-compact-context").addEventListener("click", async () => {
+  if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
+  const btn = el("btn-compact-context");
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "Kompaktiere…";
+  try {
+    const res = await api("POST", "/api/chat/context/compact", {});
+    if (res.error) alert("Fehler: " + errorText(res.error));
+    await loadChatContextStatus();
+  } catch(e) {
+    alert("Fehler: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+});
+
+async function loadChatContextStatus() {
+  const box = el("chat-context-info");
+  if (!box || !__state.loggedIn) return;
+  try {
+    const s = await api("GET", "/api/chat/context/status");
+    if (s.error) { box.textContent = "Kontext: " + errorText(s.error); return; }
+    const pct = Number(s.used_percent || 0);
+    box.innerHTML = `Provider/LLM: <strong>${h(s.provider || "?")} / ${h(s.model || "?")}</strong> · Kontext: <strong>${s.used_tokens || 0}</strong>/<strong>${s.max_tokens || 0}</strong> Tokens (${pct}%) · Auto-Kompakt ab ${s.auto_compact_at_percent || 80}%${s.summary_chars ? " · kompakt: " + s.summary_chars + " Zeichen" : ""}`;
+    box.classList.toggle("warn", pct >= 70);
+  } catch(e) {
+    box.textContent = "Kontextstatus nicht verfügbar";
   }
 }
 
@@ -254,8 +356,10 @@ el("chat-form").addEventListener("submit", async (ev) => {
   input.value = "";
   input.disabled = true;
   try {
-    await api("POST", "/api/ai/chat", { text });
+    const res = await api("POST", "/api/ai/chat", { text });
+    if (res.auto_compacted) console.info("Chat-Kontext automatisch kompaktiert");
     await loadChatMessages();
+    await loadChatContextStatus();
     await refreshStatus();
   } catch(e) {
     alert("Fehler: " + e.message);
@@ -290,7 +394,7 @@ async function loadSettings() {
 function getSettingValues(section) {
   const keys = {
     google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
-    ai: ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL"],
+    ai: ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS"],
     telegram: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"],
   }[section];
   const secretKeys = new Set(["GOOGLE_CLIENT_SECRET", "AI_API_KEY", "TELEGRAM_BOT_TOKEN"]);
@@ -488,11 +592,101 @@ function fmtDt(iso) {
   } catch(e) { return iso; }
 }
 
+// ---- Export Dialog ----
+function doExport(format) {
+  if (!__state.loggedIn) return alert("Bitte zuerst mit Google anmelden.");
+  let activeListId = el("todos-subtabs").dataset.active || "";
+  // Fallback to first list if no subtab clicked yet
+  if (!activeListId && __todoLists.length > 0) activeListId = __todoLists[0].id;
+  // If "Alle" view active, skip dialog and export all
+  if (activeListId === "__all__") {
+    _exportUrl(format, true, activeListId);
+    return;
+  }
+  // If only one list, skip dialog
+  if (__todoLists.length <= 1) {
+    _exportUrl(format, true, activeListId);
+    return;
+  }
+  // Show custom dialog
+  el("export-dialog").classList.remove("hidden");
+  const allBtn = el("export-dialog-all");
+  const curBtn = el("export-dialog-current");
+  const closeBtn = el("export-dialog-close");
+  const dialog = el("export-dialog");
+  const handler = (all) => {
+    dialog.classList.add("hidden");
+    allBtn.removeEventListener("click", onAll);
+    curBtn.removeEventListener("click", onCur);
+    closeBtn.removeEventListener("click", onClose);
+    dialog.removeEventListener("click", onBg);
+    _exportUrl(format, all, activeListId);
+  };
+  const onAll = () => handler(true);
+  const onCur = () => handler(false);
+  const onClose = () => {
+    dialog.classList.add("hidden");
+    allBtn.removeEventListener("click", onAll);
+    curBtn.removeEventListener("click", onCur);
+    closeBtn.removeEventListener("click", onClose);
+    dialog.removeEventListener("click", onBg);
+  };
+  const onBg = (e) => { if (e.target === dialog) onClose(); };
+  allBtn.addEventListener("click", onAll);
+  curBtn.addEventListener("click", onCur);
+  closeBtn.addEventListener("click", onClose);
+  dialog.addEventListener("click", onBg);
+}
+
+function _exportUrl(format, all, activeListId) {
+  const showCompleted = el("todos-show-completed").checked ? "1" : "0";
+  const ext = format === "pdf" ? "/pdf" : "";
+  let url = API + "/api/tasks/export" + ext + "?show_completed=" + showCompleted;
+  if (!all && activeListId && activeListId !== "__all__") url += "&tasklist=" + encodeURIComponent(activeListId);
+  window.open(url, "_blank");
+}
+
 // ---- Init ----
 (async function init() {
   await checkAuth();
   if (__state.loggedIn) {
     loadCalendar();
   }
+  el("todos-show-completed").addEventListener("change", () => {
+    if (document.getElementById("tab-todos").classList.contains("active")) loadTodos();
+  });
+
+  // Export/Import buttons
+  el("btn-export-json").addEventListener("click", () => doExport("json"));
+  el("btn-export-pdf").addEventListener("click", () => doExport("pdf"));
+
+  el("export-dialog-close").addEventListener("click", () => el("export-dialog").classList.add("hidden"));
+  el("export-dialog").addEventListener("click", (e) => {
+    if (e.target === el("export-dialog")) el("export-dialog").classList.add("hidden");
+  });
+
+  el("btn-import-json").addEventListener("click", () => {
+    if (!__state.loggedIn) return alert("Bitte zuerst mit Google anmelden.");
+    el("import-file-input").click();
+  });
+
+  el("import-file-input").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const res = await api("POST", "/api/tasks/import", JSON.parse(text));
+      if (res.created !== undefined) {
+        alert(res.created + " Tasks importiert" + (res.errors ? ", " + res.errors + " Fehler" : ""));
+        if (document.getElementById("tab-todos").classList.contains("active")) loadTodos();
+      } else {
+        alert("Fehler: " + (res.error || "Unbekannt"));
+      }
+    } catch(e) {
+      alert("Fehler beim Import: " + e.message);
+    }
+    ev.target.value = "";
+  });
+
   setInterval(refreshStatus, 30000);
 })();

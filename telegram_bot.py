@@ -198,7 +198,7 @@ def _build_context(user_email: str) -> str:
         week_start = now.isoformat()
         week_end = (now + timedelta(days=7)).isoformat()
         events = gc.list_events(time_min=week_start, time_max=week_end, email=user_email)
-        tasks = gc.list_tasks(gc.get_tasklist_id(email=user_email) or "@default", email=user_email)
+        tasks = gc.list_all_tasks(email=user_email)
 
         parts = ["== Kalender (kommende Woche) =="]
         for ev in events.get("items", [])[:15]:
@@ -207,9 +207,18 @@ def _build_context(user_email: str) -> str:
             parts.append(f"- {ev.get('summary','')}: {start} → {end} (ID: {ev.get('id','')})")
 
         parts.append("== Todos ==")
-        for t in tasks.get("items", [])[:20]:
-            status = t.get("status", "needsAction")
-            parts.append(f"- [{status}] {t.get('title','')} (ID: {t.get('id','')})")
+        # Group by list
+        lists: dict[str, list[dict[str, Any]]] = {}
+        for t in tasks[:20]:
+            tl = t.get("_tasklist_title", "Standard")
+            lists.setdefault(tl, []).append(t)
+        for tl_title, tl_tasks in lists.items():
+            open_count = sum(1 for t in tl_tasks if t.get("status") != "completed")
+            parts.append(f"\n### {tl_title} ({open_count} offen)")
+            for t in tl_tasks:
+                status = t.get("status", "needsAction")
+                status_label = "☐" if status != "completed" else "☑"
+                parts.append(f"- {status_label} {t.get('title','')} (ID: {t.get('id','')})")
 
         return "\n".join(parts)
     except Exception as exc:

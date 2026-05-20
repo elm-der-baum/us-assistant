@@ -1,0 +1,14 @@
+{
+  "agent_session": "",
+  "created_at": 1779196844,
+  "description": "Alles prüfen",
+  "id": 3,
+  "last_agent_ts": null,
+  "milestone_id": null,
+  "priority": 5,
+  "project_id": 6,
+  "schema": 1,
+  "status": "in_progress",
+  "title": "Integrationstest",
+  "updated_at": 1779214947
+}
