@@ -448,10 +448,15 @@ def api_ai_chat(handler: Handler) -> None:
 def _do_chat_process(email: str, text: str) -> None:
     import ai_client, db, safe_mode
 
+    sys.stderr.write(f"[assistant-chat] process start email={email} text_len={len(text)}\n")
+
     auto_compacted = False
     try:
         auto_compacted = _auto_compact_if_needed(email)
-    except Exception:
+        if auto_compacted:
+            sys.stderr.write(f"[assistant-chat] auto compacted\n")
+    except Exception as exc:
+        sys.stderr.write(f"[assistant-chat] auto compact failed: {exc}\n")
         auto_compacted = False
 
     compact_summary = str(db.get_chat_context("web", user_email=email).get("summary", ""))
@@ -471,26 +476,42 @@ def _do_chat_process(email: str, text: str) -> None:
     ]
 
     try:
-        actions = ai_client.propose_actions(text, context, user_email=email)
-        if actions:
+        raw_actions = ai_client.propose_actions(text, context, user_email=email)
+        sys.stderr.write(f"[assistant-chat] propose_actions returned {len(raw_actions)} actions: {[a.get('type') + ':' + a.get('title','') for a in raw_actions]}\n")
+        if raw_actions:
             created_ids: list[str] = []
-            for act in actions:
-                a = safe_mode.create(act["type"], act["title"], act["payload"], source="web", user_email=email)
-                created_ids.append(a["id"])
-            reply = (
-                f"Ich habe {len(created_ids)} Vorschläge zur Freigabe erstellt:\n\n"
-                + "\n".join(f"🛡️ **{act['title']}** → `{cid}`" for act, cid in zip(actions, created_ids))
-                + "\n\nBitte im Tab Freigaben prüfen und freigeben."
-            )
+            for act in raw_actions:
+                try:
+                    a = safe_mode.create(act["type"], act["title"], act["payload"], source="web", user_email=email)
+                    created_ids.append(a["id"])
+                    sys.stderr.write(f"[assistant-chat]   created action {a['id']}\n")
+                except Exception as exc:
+                    sys.stderr.write(f"[assistant-chat]   FAILED {act['type']}: {exc}\n")
+            if created_ids:
+                reply = (
+                    f"Ich habe {len(created_ids)} Vorschläge zur Freigabe erstellt:\n\n"
+                    + "\n".join(
+                        f"🛡️ **{act['title']}** → `{cid}`"
+                        for act, cid in zip(raw_actions, created_ids)
+                    )
+                    + "\n\nBitte im Tab Freigaben prüfen und freigeben."
+                )
+            else:
+                reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=user_email)
+                if "Safe Mode" in reply or "Freigabe" in reply:
+                    reply += "\n\n(Hinweis: Es wurden keine Safe-Mode-Aktionen erstellt – bitte formuliere den Auftrag konkreter.)"
             db.add_chat_message("web", "assistant", reply, user_email=email)
         else:
-            reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=email)
+            reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=user_email)
             db.add_chat_message("web", "assistant", reply, user_email=email)
     except Exception as exc:
+        sys.stderr.write(f"[assistant-chat] ERROR: {exc}\n")
         err_msg = f"Fehler: {exc}"
         if "429" in str(exc) or "Rate-Limit" in str(exc) or "rate" in str(exc).lower():
             err_msg = "⚠️ Rate-Limit – die KI antwortet zu langsam. Bitte kurz warten und erneut versuchen."
         db.add_chat_message("web", "assistant", err_msg, user_email=email)
+
+    sys.stderr.write(f"[assistant-chat] process done email={email}\n")
 
 
 @route("/api/chat/pending")

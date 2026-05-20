@@ -23,6 +23,7 @@ Regeln:
 - Schreibaktionen müssen immer als Vorschlag in den Safe Mode.
 - Antworte kurz, konkret und auf Deutsch.
 - Wenn Daten fehlen, frage nach.
+- WICHTIG: Wenn du eine Safe-Mode-Freigabe vorschlägst, FRAGE den Nutzer zuerst, ob du sie erstellen sollst. Erstelle sie NICHT automatisch im Chat-Text. Sage NICHT "Ich habe X in den Safe Mode geschrieben", wenn du es nicht WIRKLICH getan hast.
 """
 
 ACTION_SCHEMA_PROMPT = """Prüfe, ob die Nutzernachricht eine Schreibaktion für Google Calendar oder Google Tasks verlangt.
