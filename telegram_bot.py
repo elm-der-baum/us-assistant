@@ -8,12 +8,15 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from db import (
     add_chat_message,
     clear_chat_history,
     create_pending_action,
+    create_upload,
+    get_upload,
     first_user_with_settings,
     get_pending_action,
     get_user_setting,
@@ -114,13 +117,17 @@ def send_message(chat_id: int, text: str, buttons: list[list[dict[str, Any]]] | 
     return None
 
 
-def _handle_user_message(user_msg: str, chat_id: int, username: str, user_email: str) -> None:
+def _handle_user_message(user_msg: str, chat_id: int, username: str, user_email: str, attachment_ids: list[str] | None = None) -> None:
     from ai_client import assistant_reply, propose_actions
 
-    add_chat_message("telegram", "user", user_msg, user_email=user_email)
+    attachment_ids = attachment_ids or []
+    attachments_json = json.dumps(attachment_ids, ensure_ascii=False) if attachment_ids else ""
+    attachments = [dict(up) for aid in attachment_ids if (up := get_upload(aid, user_email=user_email))]
+
+    add_chat_message("telegram", "user", user_msg, user_email=user_email, attachments_json=attachments_json)
     context = _build_context(user_email)
     history = recent_chat_messages("telegram", limit=12, user_email=user_email)
-    history = [{"role": h["role"], "content": h["content"]} for h in history[:-1]]
+    history = [{"role": h["role"], "content": h["content"], "attachments": h.get("attachments", [])} for h in history[:-1]]
 
     actions = propose_actions(user_msg, context, user_email=user_email)
     if actions:
@@ -137,7 +144,7 @@ def _handle_user_message(user_msg: str, chat_id: int, username: str, user_email:
         ] for a in action_results]
         send_message(chat_id, reply, buttons=buttons, user_email=user_email)
     else:
-        reply = assistant_reply(user_msg, context=context, history=history, user_email=user_email)
+        reply = assistant_reply(user_msg, context=context, history=history, attachments=attachments, user_email=user_email)
         add_chat_message("telegram", "assistant", reply, user_email=user_email)
         send_message(chat_id, reply, user_email=user_email)
 
@@ -194,6 +201,106 @@ def _build_context(user_email: str) -> str:
         return f"(Kontext nicht verfügbar: {exc})"
 
 
+def _download_telegram_file(file_id: str, user_email: str) -> tuple[bytes, str] | None:
+    """Download a Telegram file and return (bytes, telegram_file_path)."""
+    token = _bot_token(user_email)
+    if not token:
+        return None
+    info = _telegram_call("getFile", {"file_id": file_id}, user_email=user_email)
+    if not info.get("ok"):
+        return None
+    file_path = str(info.get("result", {}).get("file_path", ""))
+    if not file_path:
+        return None
+    url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=60) as resp:
+            return resp.read(), file_path
+    except Exception:
+        return None
+
+
+def _telegram_file_info(msg: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the best file candidate from a Telegram message."""
+    if msg.get("document"):
+        doc = msg["document"]
+        return {
+            "file_id": doc.get("file_id"),
+            "filename": doc.get("file_name") or "telegram_document",
+            "mime_type": doc.get("mime_type") or "application/octet-stream",
+            "size": doc.get("file_size") or 0,
+            "kind": "Dokument",
+        }
+    if msg.get("photo"):
+        photos = msg.get("photo") or []
+        if not photos:
+            return None
+        photo = photos[-1]
+        return {
+            "file_id": photo.get("file_id"),
+            "filename": "telegram_photo.jpg",
+            "mime_type": "image/jpeg",
+            "size": photo.get("file_size") or 0,
+            "kind": "Bild",
+        }
+    if msg.get("audio"):
+        audio = msg["audio"]
+        return {
+            "file_id": audio.get("file_id"),
+            "filename": audio.get("file_name") or "telegram_audio.mp3",
+            "mime_type": audio.get("mime_type") or "audio/mpeg",
+            "size": audio.get("file_size") or 0,
+            "kind": "Audio",
+        }
+    if msg.get("voice"):
+        voice = msg["voice"]
+        return {
+            "file_id": voice.get("file_id"),
+            "filename": "telegram_voice.ogg",
+            "mime_type": voice.get("mime_type") or "audio/ogg",
+            "size": voice.get("file_size") or 0,
+            "kind": "Sprachnachricht",
+        }
+    if msg.get("video"):
+        video = msg["video"]
+        return {
+            "file_id": video.get("file_id"),
+            "filename": video.get("file_name") or "telegram_video.mp4",
+            "mime_type": video.get("mime_type") or "video/mp4",
+            "size": video.get("file_size") or 0,
+            "kind": "Video",
+        }
+    if msg.get("animation"):
+        anim = msg["animation"]
+        return {
+            "file_id": anim.get("file_id"),
+            "filename": anim.get("file_name") or "telegram_animation.mp4",
+            "mime_type": anim.get("mime_type") or "video/mp4",
+            "size": anim.get("file_size") or 0,
+            "kind": "Animation",
+        }
+    return None
+
+
+def _handle_file_message(msg: dict[str, Any], chat_id: int, username: str, user_email: str) -> None:
+    info = _telegram_file_info(msg)
+    if not info or not info.get("file_id"):
+        send_message(chat_id, "Datei konnte nicht gelesen werden.", user_email=user_email)
+        return
+    downloaded = _download_telegram_file(str(info["file_id"]), user_email)
+    if not downloaded:
+        send_message(chat_id, "Download der Telegram-Datei fehlgeschlagen.", user_email=user_email)
+        return
+    data, telegram_path = downloaded
+    filename = Path(str(info.get("filename") or Path(telegram_path).name or "telegram_upload")).name or "telegram_upload"
+    mime = str(info.get("mime_type") or "application/octet-stream")
+    upload = create_upload(user_email, filename, mime, len(data), data)
+    caption = str(msg.get("caption", "")).strip()
+    text = caption or f"[{info.get('kind', 'Datei')}-Anhang: {filename}]"
+    send_message(chat_id, f"📎 Datei empfangen: {filename} ({len(data)} Bytes). Ich verarbeite sie jetzt.", user_email=user_email)
+    _handle_user_message(text, chat_id, username, user_email, attachment_ids=[upload["id"]])
+
+
 def _run_poll_loop() -> None:
     offset = 0
     while True:
@@ -221,6 +328,9 @@ def _run_poll_loop() -> None:
                 if cb:
                     _handle_callback(chat_id, str(cb.get("data", "")), user_email)
                 else:
+                    if _telegram_file_info(msg):
+                        _handle_file_message(msg, chat_id, username, user_email)
+                        continue
                     text = str(msg.get("text", "")).strip()
                     if text:
                         if text == "/start":
