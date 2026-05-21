@@ -471,7 +471,7 @@ def recent_chat_messages(channel: str, limit: int = 20, user_email: str | None =
     if user_email is not None:
         sql += " AND (user_email = ? OR user_email IS NULL)"
         params.append(user_email.strip().lower())
-    sql += " ORDER BY created_at DESC LIMIT ?"
+    sql += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
     params.append(limit)
     with _connect() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()

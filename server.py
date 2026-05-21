@@ -605,9 +605,25 @@ _CHAT_CLEAR_COMMANDS = {
     "/verlauf-loeschen", "/verlauf-löschen", "/kontext-loeschen", "/kontext-löschen",
 }
 
+_CHAT_HELP_COMMANDS = {"/help", "/hilfe", "/commands", "/befehle"}
+
+_CHAT_HELP_TEXT = """📋 Verfügbare Chat-Befehle:
+
+• /help, /hilfe, /commands, /befehle – diese Übersicht
+• /clear, /reset, /löschen, /chat-löschen, /verlauf-löschen, /kontext-löschen – kompletten Chat-Verlauf und Kontext löschen
+
+Alle Befehle funktionieren sowohl im WebChat als auch via Telegram."""
+
 def _is_clear_chat_command(text: str) -> bool:
     t = text.strip().lower()
     return t in _CHAT_CLEAR_COMMANDS
+
+def _is_help_command(text: str) -> bool:
+    t = text.strip().lower()
+    return t in _CHAT_HELP_COMMANDS
+
+def _chat_help_text() -> str:
+    return _CHAT_HELP_TEXT
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +647,14 @@ def api_ai_chat(handler: Handler) -> None:
             handler._json_ok({"status": "cleared", "messages": db.recent_chat_messages("web", limit=50, user_email=email)})
         except Exception as exc:
             handler._json_err(str(exc), 500)
+        return
+
+    # Help command – zeigt alle Befehle an
+    if _is_help_command(text):
+        help_text = _chat_help_text()
+        db.add_chat_message("web", "user", text, user_email=email)
+        db.add_chat_message("web", "assistant", help_text, user_email=email)
+        handler._json_ok({"status": "help", "messages": db.recent_chat_messages("web", limit=50, user_email=email)})
         return
 
     if not text:

@@ -77,9 +77,26 @@ _CLEAR_COMMANDS = {
     "/verlauf-loeschen", "/verlauf-löschen", "/kontext-loeschen", "/kontext-löschen",
 }
 
+_HELP_COMMANDS = {"/help", "/hilfe", "/commands", "/befehle"}
+
+_HELP_TEXT = """📋 Verfügbare Chat-Befehle:
+
+• /help, /hilfe, /commands, /befehle – diese Übersicht
+• /clear, /reset, /löschen, /chat-löschen, /verlauf-löschen, /kontext-löschen – kompletten Chat-Verlauf und Kontext löschen
+
+Alle Befehle funktionieren sowohl im WebChat als auch via Telegram."""
+
 
 def _is_clear_chat_command(text: str) -> bool:
     return text.strip().lower() in _CLEAR_COMMANDS
+
+
+def _is_help_command(text: str) -> bool:
+    return text.strip().lower() in _HELP_COMMANDS
+
+
+def _send_help(chat_id: int, user_email: str) -> None:
+    send_message(chat_id, _HELP_TEXT, user_email=user_email)
 
 
 def send_message(chat_id: int, text: str, buttons: list[list[dict[str, Any]]] | None = None, user_email: str | None = None) -> int | None:
@@ -207,13 +224,15 @@ def _run_poll_loop() -> None:
                     text = str(msg.get("text", "")).strip()
                     if text:
                         if text == "/start":
-                            send_message(chat_id, "Hallo! Ich bin dein Assistent. Frag mich einfach – oder sag mir, was ich in deinen Kalender/Todos eintragen soll.", user_email=user_email)
+                            send_message(chat_id, "Hallo! Ich bin dein Assistent. Frag mich einfach – oder sag mir, was ich in deinen Kalender/Todos eintragen soll.\n\n/help zeigt alle Befehle.", user_email=user_email)
                         elif _is_clear_chat_command(text):
                             try:
                                 clear_chat_history("telegram", user_email=user_email)
                                 send_message(chat_id, "✅ Chat-Verlauf & Kontext gelöscht. Frischer Start!", user_email=user_email)
                             except Exception as exc:
                                 send_message(chat_id, f"Fehler beim Löschen: {exc}", user_email=user_email)
+                        elif _is_help_command(text):
+                            _send_help(chat_id, user_email)
                         else:
                             _handle_user_message(text, chat_id, username, user_email)
         except Exception:
