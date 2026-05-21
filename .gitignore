@@ -11,3 +11,4 @@ venv/
 .venv/
 diary/*.log
 data/backups/
+data/uploads/

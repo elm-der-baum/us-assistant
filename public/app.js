@@ -452,12 +452,33 @@ function renderChatMessages(messages) {
     msgs.innerHTML = '<div class="msg assistant">Hallo! Ich bin dein Assistent. Frag mich, was heute ansteht, oder sag mir, was ich in Kalender/Todos eintragen soll.</div>';
     return;
   }
-  msgs.innerHTML = messages.map(m => chatMessageHtml(m.role, m.content)).join("");
+  msgs.innerHTML = messages.map(m => chatMessageHtml(m.role, m.content, m.attachments || [])).join("");
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-function chatMessageHtml(role, content) {
-  return `<div class="msg ${role}"><div class="role">${role === "user" ? "Du" : "🤖 Assistant"}</div>${md(content)}</div>`;
+function chatMessageHtml(role, content, attachments) {
+  let attachmentHtml = "";
+  if (attachments && attachments.length) {
+    const items = attachments.map(a => {
+      const mime = a.mime_type || "";
+      const isImage = mime.startsWith("image/");
+      const isAudio = mime.startsWith("audio/");
+      const isPdf = mime === "application/pdf";
+      const url = a.url || `/assistant/api/upload/${a.id}`;
+      if (isImage) return `<div class="atch-thumb"><img src="${url}" alt="${h(a.filename)}"></div>`;
+      if (isAudio) return `<div class="atch-audio"><span>🎧 ${h(a.filename)} (${fmtBytes(a.size || 0)})</span><audio controls src="${url}"></audio></div>`;
+      if (isPdf) return `<a class="atch-link" href="${url}" target="_blank" rel="noopener">📄 ${h(a.filename)} (${fmtBytes(a.size || 0)})</a>`;
+      return `<a class="atch-link" href="${url}" target="_blank" rel="noopener">📎 ${h(a.filename)} (${fmtBytes(a.size || 0)})</a>`;
+    }).join("");
+    attachmentHtml = `<div class="msg-attachments">${items}</div>`;
+  }
+  return `<div class="msg ${role}"><div class="role">${role === "user" ? "Du" : "🤖 Assistant"}</div>${md(content)}${attachmentHtml}</div>`;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return Math.round(b/1024) + " KB";
+  return Math.round(b/(1024*1024)) + " MB";
 }
 
 function showThinkingIndicator() {
@@ -506,6 +527,27 @@ el("btn-compact-context").addEventListener("click", async () => {
   }
 });
 
+el("btn-clear-chat").addEventListener("click", async () => {
+  if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
+  if (!confirm("Gesamten Chat-Verlauf & Kontext unwiderruflich löschen?")) return;
+  const btn = el("btn-clear-chat");
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "Lösche…";
+  try {
+    const res = await api("POST", "/api/chat/clear", {});
+    if (res.error) alert("Fehler: " + errorText(res.error));
+    if (res.messages) renderChatMessages(res.messages);
+    else await loadChatMessages();
+    await loadChatContextStatus();
+  } catch(e) {
+    alert("Fehler: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+});
+
 async function loadChatContextStatus() {
   const box = el("chat-context-info");
   if (!box || !__state.loggedIn) return;
@@ -520,12 +562,76 @@ async function loadChatContextStatus() {
   }
 }
 
+let __pendingAttachments = [];
+
+function renderAttachmentPreview() {
+  const box = el("chat-attachments");
+  if (!box) return;
+  if (!__pendingAttachments.length) { box.innerHTML = ""; return; }
+  box.innerHTML = __pendingAttachments.map(a => {
+    const mime = a.mime_type || "";
+    const isImage = mime.startsWith("image/");
+    const isAudio = mime.startsWith("audio/");
+    const isPdf = mime === "application/pdf";
+    let thumb;
+    if (isImage) thumb = `<img src="${a.previewUrl || a.url}" class="atch-preview-img">`;
+    else if (isAudio) thumb = `<span class="atch-preview-icon atch-preview-audio">🎧</span>`;
+    else if (isPdf) thumb = `<span class="atch-preview-icon atch-preview-pdf">📄</span>`;
+    else thumb = `<span class="atch-preview-icon">📎</span>`;
+    return `<div class="atch-preview" data-id="${h(a.id)}">${thumb}<span class="atch-preview-name">${h(a.filename)}</span><button class="atch-remove" type="button" title="Entfernen">×</button></div>`;
+  }).join("");
+  box.querySelectorAll(".atch-remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".atch-preview").dataset.id;
+      __pendingAttachments = __pendingAttachments.filter(a => a.id !== id);
+      renderAttachmentPreview();
+    });
+  });
+}
+
+async function uploadFile(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(API + "/api/upload", { method: "POST", body: form, credentials: "include" });
+  const text = await res.text();
+  try {
+    const data = text ? JSON.parse(text) : {};
+    if (data.error) throw new Error(data.error);
+    return data;
+  } catch (e) {
+    throw new Error("Upload fehlgeschlagen: " + text.slice(0, 200));
+  }
+}
+
+el("btn-attach").addEventListener("click", () => {
+  el("chat-file-input").click();
+});
+
+el("chat-file-input").addEventListener("change", async (ev) => {
+  const files = Array.from(ev.target.files || []);
+  if (!files.length) return;
+  for (const file of files) {
+    try {
+      const previewUrl = (file.type || "").startsWith("image/") ? URL.createObjectURL(file) : null;
+      const up = await uploadFile(file);
+      __pendingAttachments.push({ id: up.id, filename: up.filename, mime_type: up.mime_type, size: up.size, url: up.url, previewUrl });
+    } catch (e) {
+      alert("Upload-Fehler: " + e.message);
+    }
+  }
+  renderAttachmentPreview();
+  ev.target.value = "";
+});
+
 el("chat-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
   const input = el("chat-input");
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !__pendingAttachments.length) return;
+  const attachmentsToSend = [...__pendingAttachments];
+  __pendingAttachments = [];
+  renderAttachmentPreview();
   input.value = "";
   input.disabled = true;
   const submitBtn = el("chat-form").querySelector("button[type=submit]");
@@ -533,11 +639,12 @@ el("chat-form").addEventListener("submit", async (ev) => {
   const msgs = el("chat-messages");
   if (msgs) {
     if (msgs.querySelector(".msg") && !msgs.querySelector(".msg .role")) msgs.innerHTML = "";
-    msgs.insertAdjacentHTML("beforeend", chatMessageHtml("user", text));
+    msgs.insertAdjacentHTML("beforeend", chatMessageHtml("user", text, attachmentsToSend));
     showThinkingIndicator();
   }
   try {
-    const res = await api("POST", "/api/ai/chat", { text });
+    const payload = { text, attachments: attachmentsToSend.map(a => a.id) };
+    const res = await api("POST", "/api/ai/chat", payload);
     if (res.status === "processing") {
       if (!_pollTimer) _pollTimer = setInterval(_pollChatPending, 1500);
     } else {
@@ -581,7 +688,7 @@ async function loadSettings() {
 function getSettingValues(section) {
   const keys = {
     google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
-    ai: ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS"],
+    ai: ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS"],
     telegram: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"],
   }[section];
   const secretKeys = new Set(["GOOGLE_CLIENT_SECRET", "AI_API_KEY", "TELEGRAM_BOT_TOKEN"]);

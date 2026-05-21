@@ -12,6 +12,7 @@ from typing import Any
 
 from db import (
     add_chat_message,
+    clear_chat_history,
     create_pending_action,
     first_user_with_settings,
     get_pending_action,
@@ -68,6 +69,17 @@ def _allowed_user_id(user_email: str | None = None) -> int:
         return int(get_user_setting(email, "TELEGRAM_ALLOWED_USER_ID", "0") or "0")
     except ValueError:
         return 0
+
+
+_CLEAR_COMMANDS = {
+    "/clear", "/reset", "/clear-chat", "/clear-context",
+    "/loeschen", "/löschen", "/chat-loeschen", "/chat-löschen",
+    "/verlauf-loeschen", "/verlauf-löschen", "/kontext-loeschen", "/kontext-löschen",
+}
+
+
+def _is_clear_chat_command(text: str) -> bool:
+    return text.strip().lower() in _CLEAR_COMMANDS
 
 
 def send_message(chat_id: int, text: str, buttons: list[list[dict[str, Any]]] | None = None, user_email: str | None = None) -> int | None:
@@ -196,6 +208,12 @@ def _run_poll_loop() -> None:
                     if text:
                         if text == "/start":
                             send_message(chat_id, "Hallo! Ich bin dein Assistent. Frag mich einfach – oder sag mir, was ich in deinen Kalender/Todos eintragen soll.", user_email=user_email)
+                        elif _is_clear_chat_command(text):
+                            try:
+                                clear_chat_history("telegram", user_email=user_email)
+                                send_message(chat_id, "✅ Chat-Verlauf & Kontext gelöscht. Frischer Start!", user_email=user_email)
+                            except Exception as exc:
+                                send_message(chat_id, f"Fehler beim Löschen: {exc}", user_email=user_email)
                         else:
                             _handle_user_message(text, chat_id, username, user_email)
         except Exception:

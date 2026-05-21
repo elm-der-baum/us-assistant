@@ -113,11 +113,22 @@ def init_db() -> None:
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY(user_email, channel)
             );
+
+            CREATE TABLE IF NOT EXISTS uploads (
+                id TEXT PRIMARY KEY,
+                user_email TEXT,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT '',
+                size INTEGER NOT NULL DEFAULT 0,
+                path TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             """
         )
         _ensure_column(conn, "pending_actions", "user_email", "user_email TEXT")
         _ensure_column(conn, "chat_messages", "user_email", "user_email TEXT")
         _ensure_column(conn, "chat_contexts", "processing", "processing INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "chat_messages", "attachments_json", "attachments_json TEXT NOT NULL DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
@@ -437,17 +448,17 @@ def update_pending_action(action_id: str, status: str, result: dict[str, Any] | 
 # ---------------------------------------------------------------------------
 # Chat messages
 # ---------------------------------------------------------------------------
-def add_chat_message(channel: str, role: str, content: str, user_email: str | None = None) -> dict[str, Any]:
+def add_chat_message(channel: str, role: str, content: str, user_email: str | None = None, attachments_json: str = "") -> dict[str, Any]:
     init_db()
     msg_id = uuid.uuid4().hex[:16]
     ts = now_ts()
     email = user_email.strip().lower() if user_email else None
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO chat_messages(id, user_email, channel, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (msg_id, email, channel, role, content, ts),
+            "INSERT INTO chat_messages(id, user_email, channel, role, content, attachments_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, email, channel, role, content, attachments_json, ts),
         )
-    return {"id": msg_id, "user_email": email, "channel": channel, "role": role, "content": content, "created_at": ts}
+    return {"id": msg_id, "user_email": email, "channel": channel, "role": role, "content": content, "attachments_json": attachments_json, "created_at": ts}
 
 
 def recent_chat_messages(channel: str, limit: int = 20, user_email: str | None = None) -> list[dict[str, Any]]:
@@ -466,6 +477,8 @@ def recent_chat_messages(channel: str, limit: int = 20, user_email: str | None =
         rows = conn.execute(sql, tuple(params)).fetchall()
     messages = [dict(row) for row in rows]
     messages.reverse()
+    for m in messages:
+        m["attachments"] = json.loads(m.get("attachments_json") or "[]") if m.get("attachments_json") else []
     return messages
 
 
@@ -567,6 +580,33 @@ def set_chat_processing(channel: str, pending: bool, user_email: str | None = No
         )
 
 
+def clear_chat_history(channel: str = "web", user_email: str | None = None) -> dict[str, Any]:
+    """Delete all chat messages and reset context for a user."""
+    init_db()
+    email = user_email.strip().lower() if user_email else ""
+    if not email:
+        raise ValueError("user_email fehlt")
+    ts = now_ts()
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM chat_messages WHERE channel = ? AND (user_email = ? OR user_email IS NULL)",
+            (channel, email),
+        )
+        conn.execute(
+            """
+            INSERT INTO chat_contexts(user_email, channel, summary, last_compacted_at, updated_at, processing)
+            VALUES (?, ?, '', 0, ?, 0)
+            ON CONFLICT(user_email, channel) DO UPDATE SET
+                summary = '',
+                last_compacted_at = 0,
+                updated_at = excluded.updated_at,
+                processing = 0
+            """,
+            (email, channel, ts),
+        )
+    return {"status": "cleared", "channel": channel, "messages": 0}
+
+
 def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -581,3 +621,54 @@ def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": int(row["created_at"]),
         "updated_at": int(row["updated_at"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Uploads
+# ---------------------------------------------------------------------------
+UPLOAD_DIR = BASE_DIR / "data" / "uploads"
+
+
+def create_upload(user_email: str | None, filename: str, mime_type: str, size: int, data: bytes) -> dict[str, Any]:
+    init_db()
+    upload_id = uuid.uuid4().hex[:16]
+    ts = now_ts()
+    email = user_email.strip().lower() if user_email else None
+    user_dir = UPLOAD_DIR / (email or "anonymous")
+    user_dir.mkdir(parents=True, exist_ok=True)
+    file_path = user_dir / f"{upload_id}_{filename}"
+    file_path.write_bytes(data)
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO uploads(id, user_email, filename, mime_type, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (upload_id, email, filename, mime_type, size, str(file_path.relative_to(BASE_DIR)), ts),
+        )
+    return {"id": upload_id, "user_email": email, "filename": filename, "mime_type": mime_type, "size": size, "created_at": ts}
+
+
+def get_upload(upload_id: str, user_email: str | None = None) -> dict[str, Any] | None:
+    init_db()
+    params: list[Any] = [upload_id]
+    sql = "SELECT * FROM uploads WHERE id = ?"
+    if user_email is not None:
+        sql += " AND (user_email = ? OR user_email IS NULL)"
+        params.append(user_email.strip().lower())
+    with _connect() as conn:
+        row = conn.execute(sql, tuple(params)).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def list_uploads(user_email: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    init_db()
+    params: list[Any] = []
+    sql = "SELECT * FROM uploads"
+    if user_email is not None:
+        sql += " WHERE user_email = ? OR user_email IS NULL"
+        params.append(user_email.strip().lower())
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    return [dict(row) for row in rows]

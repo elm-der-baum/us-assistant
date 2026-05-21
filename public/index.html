@@ -141,9 +141,13 @@
   <div class="chat-toolbar">
     <div id="chat-context-info" class="context-info">Provider/LLM: lädt…</div>
     <button id="btn-compact-context" class="btn-secondary btn-sm" type="button">🧹 Kontext kompakt</button>
+    <button id="btn-clear-chat" class="btn-secondary btn-sm" type="button">🗑️ Verlauf löschen</button>
   </div>
   <div id="chat-messages" class="chat-messages"></div>
+  <div id="chat-attachments" class="chat-attachments"></div>
   <form id="chat-form" class="chat-form">
+    <input type="file" id="chat-file-input" class="hidden" multiple>
+    <button type="button" id="btn-attach" class="btn-attach" title="Datei anhängen">📎</button>
     <textarea id="chat-input" rows="2" placeholder="Schreib mir… z.B. „Was habe ich morgen vor?“ oder „Mach einen Zahnarzt-Termin für Freitag 10:00“"></textarea>
     <button type="submit">➤</button>
   </form>
@@ -180,6 +184,17 @@
     <div class="setting-row">
       <label>AI_MODEL</label>
       <input type="text" id="s-AI_MODEL" placeholder="gpt-4o-mini / qwen…">
+    </div>
+    <div class="setting-row">
+      <label>AI_THINK_EFFORT <span style="color:var(--muted);font-size:11px">(reasoning)</span></label>
+      <select id="s-AI_THINK_EFFORT">
+        <option value="">Auto / Modell-Standard</option>
+        <option value="off">Aus (off)</option>
+        <option value="low">Niedrig (low)</option>
+        <option value="medium">Mittel (medium)</option>
+        <option value="high">Hoch (high)</option>
+        <option value="max">Maximal (max)</option>
+      </select>
     </div>
     <div class="setting-row">
       <label>AI_CONTEXT_MAX_TOKENS</label>
@@ -221,6 +236,6 @@
 
 </main>
 
-<script src="static/app.js?v=17"></script>
+<script src="static/app.js?v=20"></script>
 </body>
 </html>

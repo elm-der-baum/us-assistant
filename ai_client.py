@@ -73,6 +73,7 @@ def _settings(user_email: str | None = None) -> dict[str, str]:
         "base_url": val("AI_BASE_URL").rstrip("/"),
         "api_key": val("AI_API_KEY"),
         "model": val("AI_MODEL"),
+        "think_effort": val("AI_THINK_EFFORT"),
     }
 
 
@@ -128,7 +129,86 @@ def context_info(user_email: str | None = None) -> dict[str, Any]:
     }
 
 
-def chat_completion(messages: list[dict[str, str]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None) -> str:
+def _supports_vision(user_email: str | None = None) -> bool:
+    model = model_name(user_email).lower()
+    return any(k in model for k in ["gpt-4o", "gpt-4.1", "o3", "o4", "gemini", "claude-3", "claude-3.5", "llava", "vision", "qwen-vl", "qwen2-vl"])
+
+
+def _attachment_text_content(atch: dict[str, Any]) -> str:
+    """Build a text description for non-vision attachments or unsupported file types."""
+    name = atch.get("filename", "Datei")
+    mime = atch.get("mime_type", "")
+    size = atch.get("size", 0)
+    return f"[Anhang: {name} ({mime}, {size} Bytes)]"
+
+
+def _attachment_to_content(atch: dict[str, Any], user_email: str | None = None) -> list[dict[str, Any]]:
+    """Convert an upload attachment dict into OpenAI message content blocks."""
+    from pathlib import Path
+    import base64
+
+    mime = atch.get("mime_type", "").lower()
+    path = atch.get("path", "")
+    filename = atch.get("filename", "")
+    result: list[dict[str, Any]] = []
+
+    filepath = Path(__file__).resolve().parent / path
+    vision_mimes = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+    # Images -> base64 vision for API-supported web image formats if the model supports vision.
+    # Other image formats (SVG/BMP/TIFF/ICO) are still uploaded/served/displayed, but not sent to the LLM as vision data.
+    if mime in vision_mimes and _supports_vision(user_email):
+        if filepath.is_file():
+            data = filepath.read_bytes()
+            b64 = base64.b64encode(data).decode("ascii")
+            result.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "auto"}})
+        else:
+            result.append({"type": "text", "text": f"[Bild nicht gefunden: {filename}]"})
+    elif mime == "image/svg+xml" and filepath.is_file():
+        try:
+            text = filepath.read_text(encoding="utf-8", errors="replace")
+            result.append({"type": "text", "text": f"--- SVG-Bild {filename} ---\n{text[:60000]}\n--- Ende {filename} ---"})
+        except Exception:
+            result.append({"type": "text", "text": f"[SVG-Bildanhang: {filename}]"})
+    elif mime.startswith("image/"):
+        result.append({"type": "text", "text": f"[Bildanhang: {filename} ({mime}, {atch.get('size',0)} Bytes)]"})
+    elif mime == "application/pdf":
+        if filepath.is_file():
+            try:
+                import subprocess
+                proc = subprocess.run(["pdftotext", "-layout", str(filepath), "-"], capture_output=True, text=True, timeout=20)
+                text = proc.stdout.strip()
+                if text:
+                    result.append({"type": "text", "text": f"--- PDF-Text von {filename} ---\n{text[:60000]}\n--- Ende {filename} ---"})
+                else:
+                    result.append({"type": "text", "text": f"[PDF-Anhang: {filename} ({atch.get('size',0)} Bytes). Kein extrahierbarer Text gefunden.]"})
+            except Exception as exc:
+                result.append({"type": "text", "text": f"[PDF-Anhang: {filename} ({atch.get('size',0)} Bytes). Text-Extraktion fehlgeschlagen: {exc}]"})
+        else:
+            result.append({"type": "text", "text": f"[PDF nicht gefunden: {filename}]"})
+    elif mime.startswith("audio/"):
+        result.append({"type": "text", "text": f"[Audio-Anhang: {filename} ({mime}, {atch.get('size',0)} Bytes). Audio-Upload ist gespeichert/verlinkt; automatische Transkription ist noch nicht aktiviert.]"})
+    elif mime.startswith("text/") or filename.lower().endswith((
+        ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".log",
+        ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css",
+        ".sh", ".sql", ".c", ".cpp", ".h", ".java", ".go", ".rs", ".php",
+        ".swift", ".kt", ".xml", ".ini", ".cfg", ".toml", ".properties", ".env"
+    )):
+        filepath = Path(__file__).resolve().parent / path
+        if filepath.is_file():
+            try:
+                text = filepath.read_text(encoding="utf-8", errors="replace")
+                result.append({"type": "text", "text": f"--- Inhalt von {filename} ---\n{text[:60000]}\n--- Ende {filename} ---"})
+            except Exception:
+                result.append({"type": "text", "text": f"[Anhang: {filename} konnte nicht gelesen werden]"})
+        else:
+            result.append({"type": "text", "text": f"[Anhang nicht gefunden: {filename}]"})
+    else:
+        result.append({"type": "text", "text": _attachment_text_content(atch)})
+    return result
+
+
+def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
         raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
@@ -140,6 +220,8 @@ def chat_completion(messages: list[dict[str, str]], max_tokens: int = 1000, temp
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if s.get("think_effort"):
+        body["reasoning_effort"] = s["think_effort"]
     data = json.dumps(body).encode()
     for attempt in range(2):
         req = urllib.request.Request(url, data=data, method="POST")
@@ -169,14 +251,34 @@ def chat_completion(messages: list[dict[str, str]], max_tokens: int = 1000, temp
     raise RuntimeError("AI Rate-Limit – bitte in ein paar Sekunden erneut versuchen.")
 
 
-def assistant_reply(user_text: str, context: str = "", history: list[dict[str, str]] | None = None, user_email: str | None = None) -> str:
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+def assistant_reply(user_text: str, context: str = "", history: list[dict[str, Any]] | None = None, attachments: list[dict[str, Any]] | None = None, user_email: str | None = None) -> str:
+    history = history or []
+    attachments = attachments or []
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     if context:
         messages.append({"role": "system", "content": f"Aktueller Kontext:\n{context}"})
-    for msg in history or []:
+    for msg in history:
         if msg.get("role") in {"user", "assistant"}:
-            messages.append({"role": str(msg["role"]), "content": str(msg.get("content", ""))})
-    messages.append({"role": "user", "content": user_text})
+            content_blocks: list[dict[str, Any]] = []
+            text = str(msg.get("content", ""))
+            if text:
+                content_blocks.append({"type": "text", "text": text})
+            # If history entries carry attachments, convert them
+            for atch in msg.get("attachments") or []:
+                content_blocks.extend(_attachment_to_content(atch, user_email))
+            if content_blocks:
+                messages.append({"role": str(msg["role"]), "content": content_blocks})
+            else:
+                messages.append({"role": str(msg["role"]), "content": text})
+    # Build user message with text + attachments
+    user_content: list[dict[str, Any]] = []
+    if user_text:
+        user_content.append({"type": "text", "text": user_text})
+    for atch in attachments:
+        user_content.extend(_attachment_to_content(atch, user_email))
+    if not user_content:
+        user_content = [{"type": "text", "text": user_text}]
+    messages.append({"role": "user", "content": user_content})
     return chat_completion(messages, user_email=user_email)
 
 

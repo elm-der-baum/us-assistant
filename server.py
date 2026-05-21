@@ -124,6 +124,14 @@ class Handler(BaseHTTPRequestHandler):
         if path in ROUTES and "ANY" in ROUTES[path]:
             return ROUTES[path]["ANY"](self)
 
+        # Regex routes (keys starting with ^)
+        import re
+        for route_path, methods in ROUTES.items():
+            if route_path.startswith("^"):
+                m = re.match(route_path[1:], path)
+                if m and method in methods:
+                    return methods[method](self, *m.groups())
+
         if path.startswith("/static/") or path == "/" or path.endswith(".html") or path.endswith(".js") or path.endswith(".css"):
             return self._serve_static(path)
 
@@ -263,7 +271,7 @@ def api_get_settings(handler: Handler) -> None:
     APP_KEYS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
 
-    USER_KEYS = ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
+    USER_KEYS = ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     db.init_db()
@@ -292,7 +300,7 @@ def api_save_settings(handler: Handler) -> None:
 
     APP_KEYS = {"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"}
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
-    USER_KEYS = {"AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
+    USER_KEYS = {"AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     app_vals: dict[str, str] = {}
@@ -414,11 +422,200 @@ def api_google_callback(handler: Handler) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multipart upload helper
+# ---------------------------------------------------------------------------
+import re as _re
+
+def _parse_multipart(handler: Handler) -> dict[str, Any]:
+    content_type = handler.headers.get("Content-Type", "")
+    if "boundary=" not in content_type:
+        return {}
+    boundary = content_type.split("boundary=")[1].split(";")[0].strip('"')
+    length = int(handler.headers.get("Content-Length", 0))
+    raw = handler.rfile.read(length)
+    parts = raw.split(b"--" + boundary.encode())
+    files: dict[str, Any] = {}
+    for part in parts:
+        if not part or part.strip() == b"--" or part.strip() == b"":
+            continue
+        header_end = part.find(b"\r\n\r\n")
+        sep = 4
+        if header_end == -1:
+            header_end = part.find(b"\n\n")
+            sep = 2
+        headers = part[:header_end].decode("utf-8", errors="ignore")
+        body = part[header_end + sep:]
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        elif body.endswith(b"\n"):
+            body = body[:-1]
+        if body.endswith(b"--"):
+            body = body[:-2]
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        elif body.endswith(b"\n"):
+            body = body[:-1]
+        name_match = _re.search(r'name="([^"]+)"', headers)
+        filename_match = _re.search(r'filename="([^"]*)"', headers)
+        if name_match:
+            name = name_match.group(1)
+            if filename_match:
+                files[name] = {
+                    "filename": filename_match.group(1),
+                    "data": body,
+                    "headers": headers,
+                }
+            else:
+                files[name] = {"value": body.decode("utf-8", errors="ignore")}
+    return files
+
+
+def _looks_like_text(data: bytes) -> bool:
+    """Best-effort detection for text files with arbitrary extensions."""
+    if not data:
+        return True
+    sample = data[:8192]
+    if b"\x00" in sample:
+        return False
+    try:
+        decoded = sample.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            decoded = sample.decode("latin-1")
+        except Exception:
+            return False
+    if not decoded:
+        return True
+    printable = sum(1 for ch in decoded if ch.isprintable() or ch in "\r\n\t")
+    return (printable / max(len(decoded), 1)) > 0.85
+
+
+def _detect_mime(filename: str, data: bytes) -> str:
+    """Detect supported upload MIME types by extension, magic bytes and text fallback."""
+    ext = Path(filename).suffix.lower()
+    MIME_MAP = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+        ".bmp": "image/bmp", ".tiff": "image/tiff", ".tif": "image/tiff", ".ico": "image/x-icon",
+        ".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv",
+        ".json": "application/json", ".yaml": "text/yaml", ".yml": "text/yaml",
+        ".xml": "text/xml", ".html": "text/html", ".htm": "text/html",
+        ".css": "text/css", ".js": "text/javascript", ".ts": "text/plain",
+        ".jsx": "text/plain", ".tsx": "text/plain", ".py": "text/x-python",
+        ".sh": "text/x-shellscript", ".sql": "text/plain", ".log": "text/plain",
+        ".c": "text/plain", ".cpp": "text/plain", ".h": "text/plain",
+        ".java": "text/plain", ".go": "text/plain", ".rs": "text/plain",
+        ".php": "text/plain", ".swift": "text/plain", ".kt": "text/plain",
+        ".ini": "text/plain", ".cfg": "text/plain", ".toml": "text/plain",
+        ".properties": "text/plain", ".env": "text/plain",
+        ".pdf": "application/pdf",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+        ".m4a": "audio/mp4", ".mp4a": "audio/mp4", ".flac": "audio/flac", ".aac": "audio/aac",
+        ".wma": "audio/x-ms-wma", ".opus": "audio/opus", ".weba": "audio/webm",
+    }
+    if ext in MIME_MAP:
+        return MIME_MAP[ext]
+    # Magic-byte fallback for renamed files
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if data.startswith(b"OggS"):
+        return "audio/ogg"
+    if data.startswith(b"fLaC"):
+        return "audio/flac"
+    if data.startswith(b"ID3") or data[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return "audio/mpeg"
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        return "audio/mp4"
+    if _looks_like_text(data):
+        return "text/plain"
+    return "application/octet-stream"
+
+
+# ---------------------------------------------------------------------------
+# Uploads
+# ---------------------------------------------------------------------------
+@route("/api/upload", methods=["POST"])
+def api_upload(handler: Handler) -> None:
+    import db
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    files = _parse_multipart(handler)
+    file_info = files.get("file")
+    if not file_info or "data" not in file_info:
+        handler._json_err("file fehlt", 400)
+        return
+    data = file_info["data"]
+    filename = file_info["filename"] or "upload"
+    mime = _detect_mime(filename, data)
+    upload = db.create_upload(email, filename, mime, len(data), data)
+    handler._json_ok({
+        "id": upload["id"],
+        "filename": upload["filename"],
+        "mime_type": upload["mime_type"],
+        "size": upload["size"],
+        "url": f"/api/upload/{upload['id']}",
+    })
+
+
+@route("^/api/upload/([a-zA-Z0-9_-]+)$")
+def api_upload_get(handler: Handler, upload_id: str = "") -> None:
+    import db
+    email = _get_session_email(handler)
+    upload = db.get_upload(upload_id, user_email=email)
+    if not upload:
+        handler._json_err("Nicht gefunden", 404)
+        return
+    file_path = BASE_DIR / upload["path"]
+    if not file_path.is_file():
+        handler._json_err("Datei nicht gefunden", 404)
+        return
+    data = file_path.read_bytes()
+    mime = upload.get("mime_type", "application/octet-stream")
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", mime)
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Content-Disposition", f'inline; filename="{upload["filename"]}"')
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+# ---------------------------------------------------------------------------
+# Chat commands
+# ---------------------------------------------------------------------------
+_CHAT_CLEAR_COMMANDS = {
+    "/clear", "/reset", "/clear-chat", "/clear-context",
+    "/loeschen", "/löschen", "/chat-loeschen", "/chat-löschen",
+    "/verlauf-loeschen", "/verlauf-löschen", "/kontext-loeschen", "/kontext-löschen",
+}
+
+def _is_clear_chat_command(text: str) -> bool:
+    t = text.strip().lower()
+    return t in _CHAT_CLEAR_COMMANDS
+
+
+# ---------------------------------------------------------------------------
 # AI Chat
 # ---------------------------------------------------------------------------
 @route("/api/ai/chat", methods=["POST"])
 def api_ai_chat(handler: Handler) -> None:
-    import ai_client, db, safe_mode
+    import ai_client, db, safe_mode, json as _json
     email = _get_session_email(handler)
     if not email:
         handler._json_err("Nicht eingeloggt", 401)
@@ -426,16 +623,30 @@ def api_ai_chat(handler: Handler) -> None:
 
     body = _read_body(handler) or {}
     text = str(body.get("text", "")).strip()
+
+    # Chat clear command – löscht Verlauf + Kontext sofort (ohne KI)
+    if _is_clear_chat_command(text):
+        try:
+            db.clear_chat_history("web", user_email=email)
+            handler._json_ok({"status": "cleared", "messages": db.recent_chat_messages("web", limit=50, user_email=email)})
+        except Exception as exc:
+            handler._json_err(str(exc), 500)
+        return
+
     if not text:
         handler._json_err("text fehlt", 400)
         return
 
-    db.add_chat_message("web", "user", text, user_email=email)
+    attachments_raw = body.get("attachments", [])
+    attachments_ids = [str(a) for a in attachments_raw if a] if attachments_raw else []
+    attachments_json = _json.dumps(attachments_ids)
+
+    db.add_chat_message("web", "user", text, user_email=email, attachments_json=attachments_json)
     db.set_chat_processing("web", True, user_email=email)
 
     def _process():
         try:
-            _do_chat_process(email, text)
+            _do_chat_process(email, text, attachments_ids)
         except Exception:
             pass
         finally:
@@ -445,10 +656,17 @@ def api_ai_chat(handler: Handler) -> None:
     handler._json_ok({"status": "processing"})
 
 
-def _do_chat_process(email: str, text: str) -> None:
+def _do_chat_process(email: str, text: str, attachment_ids: list[str]) -> None:
     import ai_client, db, safe_mode
 
-    sys.stderr.write(f"[assistant-chat] process start email={email} text_len={len(text)}\n")
+    sys.stderr.write(f"[assistant-chat] process start email={email} text_len={len(text)} attachments={len(attachment_ids)}\n")
+
+    # Resolve attachments
+    attachments: list[dict[str, Any]] = []
+    for up_id in attachment_ids:
+        up = db.get_upload(up_id, user_email=email)
+        if up:
+            attachments.append(dict(up))
 
     auto_compacted = False
     try:
@@ -470,7 +688,7 @@ def _do_chat_process(email: str, text: str) -> None:
     history_limit = 10 if compact_summary else 20
     history = db.recent_chat_messages("web", limit=history_limit, user_email=email)
     history_mapped = [
-        {"role": h["role"], "content": h["content"]}
+        {"role": h["role"], "content": h["content"], "attachments": h.get("attachments", [])}
         for h in history[:-1]
         if not str(h.get("content", "")).startswith("🧠 Kompakter Kontext:")
     ]
@@ -497,12 +715,12 @@ def _do_chat_process(email: str, text: str) -> None:
                     + "\n\nBitte im Tab Freigaben prüfen und freigeben."
                 )
             else:
-                reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=email)
+                reply = ai_client.assistant_reply(text, context=context, history=history_mapped, attachments=attachments, user_email=email)
                 if "Safe Mode" in reply or "Freigabe" in reply:
                     reply += "\n\n(Hinweis: Es wurden keine Safe-Mode-Aktionen erstellt – bitte formuliere den Auftrag konkreter.)"
             db.add_chat_message("web", "assistant", reply, user_email=email)
         else:
-            reply = ai_client.assistant_reply(text, context=context, history=history_mapped, user_email=user_email)
+            reply = ai_client.assistant_reply(text, context=context, history=history_mapped, attachments=attachments, user_email=email)
             db.add_chat_message("web", "assistant", reply, user_email=email)
     except Exception as exc:
         sys.stderr.write(f"[assistant-chat] ERROR: {exc}\n")
@@ -893,6 +1111,22 @@ def api_chat_context_compact(handler: Handler) -> None:
         summary = ai_client.compact_context(str(ctx.get("summary", "")), [{"role": m["role"], "content": m["content"]} for m in messages], user_email=email)
         db.replace_chat_with_compact_summary("web", summary, user_email=email)
         handler._json_ok({"ok": True, "summary": summary, "messages": db.recent_chat_messages("web", limit=50, user_email=email), **_chat_context_status(email)})
+    except Exception as exc:
+        handler._json_err(str(exc), 500)
+
+
+@route("/api/chat/clear", methods=["POST"])
+def api_chat_clear(handler: Handler) -> None:
+    import db
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    channel = str(handler._query().get("channel", "web"))
+    try:
+        db.clear_chat_history(channel, user_email=email)
+        msgs = db.recent_chat_messages(channel, limit=50, user_email=email)
+        handler._json_ok({"ok": True, "messages": msgs, **_chat_context_status(email)})
     except Exception as exc:
         handler._json_err(str(exc), 500)
 
