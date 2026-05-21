@@ -208,7 +208,7 @@ def _attachment_to_content(atch: dict[str, Any], user_email: str | None = None) 
     return result
 
 
-def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None) -> str:
+def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
         raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
@@ -223,12 +223,18 @@ def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temp
     if s.get("think_effort"):
         body["reasoning_effort"] = s["think_effort"]
     data = json.dumps(body).encode()
+    # large images = large base64 payload = slower AI response → increase timeout
+    has_vision = any(
+        isinstance(m.get("content"), list) and any(b.get("type") == "image_url" for b in m["content"])
+        for m in messages
+    )
+    timeout = timeout_seconds or (180 if has_vision else 90)
     for attempt in range(2):
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Authorization", f"Bearer {s['api_key']}")
         req.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 payload = json.loads(resp.read())
             return str(payload["choices"][0]["message"]["content"] or "")
         except urllib.error.HTTPError as exc:
@@ -246,6 +252,11 @@ def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temp
                 time.sleep(2)
                 continue
             raise RuntimeError(f"AI Netzwerkfehler: {exc}") from exc
+        except TimeoutError as exc:
+            if attempt == 0 and has_vision:
+                time.sleep(3)
+                continue
+            raise RuntimeError(f"Die KI benötigt zu lange für die Antwort (Timeout nach {timeout}s). Bitte mit einem kürzeren Text nochmals versuchen.") from exc
         except Exception as exc:
             raise RuntimeError(f"Unerwartete AI-Antwort: {exc}") from exc
     raise RuntimeError("AI Rate-Limit – bitte in ein paar Sekunden erneut versuchen.")
