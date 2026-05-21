@@ -138,7 +138,11 @@ def _process_message(user_msg: str, chat_id: int, username: str, user_email: str
         attachments = [dict(up) for aid in attachment_ids if (up := get_upload(aid, user_email=user_email))]
         context = _build_context(user_email)
         history = recent_chat_messages("telegram", limit=12, user_email=user_email)
-        history = [{"role": h["role"], "content": h["content"], "attachments": h.get("attachments", [])} for h in history[:-1]]
+        for h in history:
+            aids = h.get("attachments")
+            if isinstance(aids, list):
+                h["attachments"] = [dict(up) for aid in aids if isinstance(aid, str) and (up := get_upload(aid, user_email=user_email))]
+        history = [{"role": h["role"], "content": h["content"], "attachments": h["attachments"]} for h in history[:-1]]
 
         actions = propose_actions(user_msg, context, user_email=user_email)
         if actions:

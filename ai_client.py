@@ -265,7 +265,8 @@ def assistant_reply(user_text: str, context: str = "", history: list[dict[str, A
                 content_blocks.append({"type": "text", "text": text})
             # If history entries carry attachments, convert them
             for atch in msg.get("attachments") or []:
-                content_blocks.extend(_attachment_to_content(atch, user_email))
+                if isinstance(atch, dict):
+                    content_blocks.extend(_attachment_to_content(atch, user_email))
             if content_blocks:
                 messages.append({"role": str(msg["role"]), "content": content_blocks})
             else:

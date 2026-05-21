@@ -711,8 +711,12 @@ def _do_chat_process(email: str, text: str, attachment_ids: list[str]) -> None:
     context = "\n\n".join(context_parts)
     history_limit = 10 if compact_summary else 20
     history = db.recent_chat_messages("web", limit=history_limit, user_email=email)
+    for h in history:
+        aids = h.get("attachments")
+        if isinstance(aids, list):
+            h["attachments"] = [dict(up) for aid in aids if isinstance(aid, str) and (up := db.get_upload(aid, user_email=email))]
     history_mapped = [
-        {"role": h["role"], "content": h["content"], "attachments": h.get("attachments", [])}
+        {"role": h["role"], "content": h["content"], "attachments": h["attachments"]}
         for h in history[:-1]
         if not str(h.get("content", "")).startswith("🧠 Kompakter Kontext:")
     ]
