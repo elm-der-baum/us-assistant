@@ -416,9 +416,6 @@ async function reject(id) {
   }
 }
 
-  }
-}
-
 function toggleEditForm(id) {
   const form = el("edit-form-" + id);
   if (!form) return;
