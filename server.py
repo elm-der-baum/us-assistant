@@ -307,7 +307,7 @@ def api_save_settings(handler: Handler) -> None:
     user_vals: dict[str, str] = {}
 
     for k, v in body.items():
-        k = str(k).upper()
+        k = str(k)
         if not isinstance(v, str):
             continue
         if k in APP_KEYS:
