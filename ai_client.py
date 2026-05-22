@@ -24,12 +24,17 @@ Regeln:
 - Antworte kurz, konkret und auf Deutsch.
 - Wenn Daten fehlen, frage nach.
 - WICHTIG: Wenn du eine Safe-Mode-Freigabe vorschlägst, FRAGE den Nutzer zuerst, ob du sie erstellen sollst. Erstelle sie NICHT automatisch im Chat-Text. Sage NICHT "Ich habe X in den Safe Mode geschrieben", wenn du es nicht WIRKLICH getan hast.
+- Antworte AUSSCHLIESSLICH in natürlicher Sprache. Gib NIEMALS JSON, Code-Blöcke oder technische Datenstrukturen im Antworttext aus.
 """
 
-ACTION_SCHEMA_PROMPT = """Prüfe, ob die Nutzernachricht eine Schreibaktion für Google Calendar oder Google Tasks verlangt.
+ACTION_SCHEMA_PROMPT = """Du bist ein Klassifizierungs-Modul. Deine einzige Aufgabe ist es, Schreibaktionen für Google Calendar oder Google Tasks als JSON zu extrahieren.
 
-Wichtig: Schreibaktionen werden NICHT direkt ausgeführt. Du erstellst nur Safe-Mode-Vorschläge.
-Gib ausschließlich gültiges JSON zurück:
+WICHTIGE REGELN:
+- Antworte AUSSCHLIESSLICH mit dem JSON-Objekt. Kein Einleitungstext, keine Erklärung, keine Markdown-Code-Blöcke (```json), keine Zusammenfassung.
+- Wenn keine Schreibaktion verlangt ist, antworte mit: {"actions": []}
+- Wenn eine Schreibaktion verlangt ist, antworte NUR mit dem JSON-Objekt im unten stehenden Format.
+
+FORMAT:
 {
   "actions": [
     {
@@ -39,8 +44,6 @@ Gib ausschließlich gültiges JSON zurück:
     }
   ]
 }
-
-Wenn keine Schreibaktion gewünscht ist: {"actions": []}
 
 Payload-Regeln:
 - create_calendar_event: payload ist ein Google Calendar Event Body, z.B.
@@ -208,7 +211,7 @@ def _attachment_to_content(atch: dict[str, Any], user_email: str | None = None) 
     return result
 
 
-def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
+def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 4000, temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
         raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
@@ -228,7 +231,7 @@ def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 1000, temp
         isinstance(m.get("content"), list) and any(b.get("type") == "image_url" for b in m["content"])
         for m in messages
     )
-    timeout = timeout_seconds or (180 if has_vision else 90)
+    timeout = timeout_seconds or (240 if has_vision else 120)
     for attempt in range(2):
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Authorization", f"Bearer {s['api_key']}")
@@ -332,7 +335,7 @@ def propose_actions(user_text: str, context: str = "", user_email: str | None = 
         {"role": "user", "content": user_text},
     ]
     try:
-        raw = chat_completion(messages, max_tokens=1200, temperature=0.0, user_email=user_email)
+        raw = chat_completion(messages, max_tokens=2000, temperature=0.0, user_email=user_email)
     except Exception:
         return []
 
@@ -365,21 +368,68 @@ def propose_actions(user_text: str, context: str = "", user_email: str | None = 
 
 
 def _parse_json(raw: str) -> Any:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?", "", raw, flags=re.I).strip()
-        raw = re.sub(r"```$", "", raw).strip()
+    if not raw:
+        return {}
+    text = raw.strip()
+    # 1. Try markdown fenced blocks anywhere in the text
+    for pattern in (r"```json\s*(.*?)\s*```", r"```\s*(.*?)\s*```"):
+        for match in re.finditer(pattern, text, flags=re.S | re.I):
+            candidate = match.group(1).strip()
+            if candidate:
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+    # 2. Try the whole string
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError:
-        # last resort: extract first JSON object
-        match = re.search(r"\{.*\}", raw, flags=re.S)
-        if not match:
-            return {}
+        pass
+    # 3. Balance braces to find the outermost JSON object or array,
+    #    respecting quoted strings so braces inside values don't mislead.
+    candidates = []
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start_idx = text.find(start_char)
+        while start_idx != -1:
+            depth = 0
+            in_string = False
+            escape_next = False
+            for i in range(start_idx, len(text)):
+                ch = text[i]
+                if escape_next:
+                    escape_next = False
+                    continue
+                if ch == "\\":
+                    escape_next = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if not in_string:
+                    if ch == start_char:
+                        depth += 1
+                    elif ch == end_char:
+                        depth -= 1
+                        if depth == 0:
+                            candidate = text[start_idx : i + 1]
+                            try:
+                                candidates.append((start_idx, len(candidate), json.loads(candidate)))
+                            except json.JSONDecodeError:
+                                pass
+                            break
+            start_idx = text.find(start_char, start_idx + 1)
+    if candidates:
+        # Prefer earliest start index, and longest match if tied
+        candidates.sort(key=lambda x: (x[0], -x[1]))
+        return candidates[0][2]
+    # 4. Fallback: greedy regex for the first {…} block
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
         try:
             return json.loads(match.group(0))
         except Exception:
-            return {}
+            pass
+    return {}
 
 
 def test_connection(user_email: str | None = None) -> dict[str, Any]:
