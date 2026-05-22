@@ -211,7 +211,7 @@ def _attachment_to_content(atch: dict[str, Any], user_email: str | None = None) 
     return result
 
 
-def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 4000, temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
+def chat_completion(messages: list[dict[str, Any]], temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
         raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
@@ -221,7 +221,6 @@ def chat_completion(messages: list[dict[str, Any]], max_tokens: int = 4000, temp
         "model": s["model"],
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
     }
     if s.get("think_effort"):
         body["reasoning_effort"] = s["think_effort"]
@@ -313,7 +312,6 @@ def compact_context(existing_summary: str, messages: list[dict[str, str]], user_
             {"role": "system", "content": prompt},
             {"role": "user", "content": content[:60000]},
         ],
-        max_tokens=1800,
         temperature=0.1,
         user_email=user_email,
     ).strip()
@@ -335,7 +333,7 @@ def propose_actions(user_text: str, context: str = "", user_email: str | None = 
         {"role": "user", "content": user_text},
     ]
     try:
-        raw = chat_completion(messages, max_tokens=2000, temperature=0.0, user_email=user_email)
+        raw = chat_completion(messages, temperature=0.0, user_email=user_email)
     except Exception:
         return []
 
@@ -440,7 +438,6 @@ def test_connection(user_email: str | None = None) -> dict[str, Any]:
                 {"role": "system", "content": "Antworte nur mit: ok"},
                 {"role": "user", "content": "ping"},
             ],
-            max_tokens=10,
             temperature=0,
             user_email=user_email,
         )
