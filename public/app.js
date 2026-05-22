@@ -310,7 +310,17 @@ async function loadSafeMode() {
         ${detailLines ? '<div class="action-detail">' + detailLines + '</div>' : ''}
         <div class="action-actions">
           <button class="btn-ok approve-btn" data-id="${a.id}">✅ Genehmigen</button>
+          <button class="btn-secondary edit-btn" data-id="${a.id}">✏️ Bearbeiten</button>
           <button class="btn-danger reject-btn" data-id="${a.id}">❌ Ablehnen</button>
+          <button class="btn-danger delete-btn" data-id="${a.id}">🗑️ Löschen</button>
+        </div>
+        <div class="edit-form hidden" id="edit-form-${a.id}">
+          <div class="setting-row"><label>Titel</label><input type="text" id="edit-title-${a.id}" value="${h(a.title)}"></div>
+          <div class="setting-row"><label>Payload (JSON)</label><textarea id="edit-payload-${a.id}" rows="4">${h(JSON.stringify(a.payload || {}, null, 2))}</textarea></div>
+          <div class="setting-actions">
+            <button class="btn-primary save-edit-btn" data-id="${a.id}">💾 Speichern</button>
+            <button class="btn-secondary cancel-edit-btn" data-id="${a.id}">Abbrechen</button>
+          </div>
         </div>
       </div>`;
     }).join("");
@@ -321,6 +331,18 @@ async function loadSafeMode() {
     });
     container.querySelectorAll(".reject-btn").forEach(b => {
       b.addEventListener("click", () => reject(b.dataset.id));
+    });
+    container.querySelectorAll(".edit-btn").forEach(b => {
+      b.addEventListener("click", () => toggleEditForm(b.dataset.id));
+    });
+    container.querySelectorAll(".cancel-edit-btn").forEach(b => {
+      b.addEventListener("click", () => toggleEditForm(b.dataset.id));
+    });
+    container.querySelectorAll(".save-edit-btn").forEach(b => {
+      b.addEventListener("click", () => saveEdit(b.dataset.id));
+    });
+    container.querySelectorAll(".delete-btn").forEach(b => {
+      b.addEventListener("click", () => deleteAction(b.dataset.id));
     });
   } catch(e) {
     container.textContent = "Fehler: " + e.message;
@@ -391,6 +413,61 @@ async function reject(id) {
   } catch(e) {
     showApprovalResult(card, "❌ " + e.message, "err");
     setTimeout(() => loadSafeMode(), 1800);
+  }
+}
+
+  }
+}
+
+function toggleEditForm(id) {
+  const form = el("edit-form-" + id);
+  if (!form) return;
+  form.classList.toggle("hidden");
+}
+
+async function saveEdit(id) {
+  const titleInp = el("edit-title-" + id);
+  const payloadTa = el("edit-payload-" + id);
+  if (!titleInp || !payloadTa) return;
+  let payload;
+  try {
+    payload = JSON.parse(payloadTa.value);
+  } catch(e) {
+    alert("Ungueltiges JSON im Payload: " + e.message);
+    return;
+  }
+  const card = el("act-" + id);
+  if (card) card.classList.add("busy");
+  try {
+    const res = await api("POST", "/api/safe-mode/edit", { id, title: titleInp.value.trim(), payload });
+    if (res.ok) {
+      await loadSafeMode();
+    } else {
+      alert("Bearbeiten fehlgeschlagen: " + (res.error || "Unbekannter Fehler"));
+      if (card) card.classList.remove("busy");
+    }
+  } catch(e) {
+    alert("Bearbeiten fehlgeschlagen: " + e.message);
+    if (card) card.classList.remove("busy");
+  }
+}
+
+async function deleteAction(id) {
+  if (!confirm("Aktion wirklich loeschen? Dies kann nicht rueckgaengig gemacht werden.")) return;
+  const card = el("act-" + id);
+  if (card) card.classList.add("busy");
+  try {
+    const res = await api("POST", "/api/safe-mode/delete", { id });
+    if (res.ok) {
+      await loadSafeMode();
+      await refreshStatus();
+    } else {
+      alert("Loeschen fehlgeschlagen: " + (res.error || "Unbekannter Fehler"));
+      if (card) card.classList.remove("busy");
+    }
+  } catch(e) {
+    alert("Loeschen fehlgeschlagen: " + e.message);
+    if (card) card.classList.remove("busy");
   }
 }
 
