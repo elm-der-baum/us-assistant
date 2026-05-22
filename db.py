@@ -445,6 +445,42 @@ def update_pending_action(action_id: str, status: str, result: dict[str, Any] | 
     return get_pending_action(action_id, user_email=user_email)
 
 
+def edit_pending_action(action_id: str, title: str | None = None, payload: dict[str, Any] | None = None, action_type: str | None = None, user_email: str | None = None) -> dict[str, Any] | None:
+    init_db()
+    ts = now_ts()
+    sets: list[str] = ["updated_at = ?"]
+    params: list[Any] = [ts]
+    if title is not None:
+        sets.append("title = ?")
+        params.append(title)
+    if payload is not None:
+        sets.append("payload_json = ?")
+        params.append(json.dumps(payload, ensure_ascii=False))
+    if action_type is not None:
+        sets.append("type = ?")
+        params.append(action_type)
+    params.append(action_id)
+    sql = f"UPDATE pending_actions SET {', '.join(sets)} WHERE id = ?"
+    if user_email is not None:
+        sql += " AND (user_email = ? OR user_email IS NULL)"
+        params.append(user_email.strip().lower())
+    with _connect() as conn:
+        conn.execute(sql, tuple(params))
+    return get_pending_action(action_id, user_email=user_email)
+
+
+def delete_pending_action(action_id: str, user_email: str | None = None) -> bool:
+    init_db()
+    params: list[Any] = [action_id]
+    sql = "DELETE FROM pending_actions WHERE id = ?"
+    if user_email is not None:
+        sql += " AND (user_email = ? OR user_email IS NULL)"
+        params.append(user_email.strip().lower())
+    with _connect() as conn:
+        cur = conn.execute(sql, tuple(params))
+        return cur.rowcount > 0
+
+
 # ---------------------------------------------------------------------------
 # Chat messages
 # ---------------------------------------------------------------------------

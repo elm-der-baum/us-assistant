@@ -1086,6 +1086,45 @@ def api_safe_mode_reject(handler: Handler) -> None:
     handler._json_ok(safe_mode.reject(action_id, user_email=email))
 
 
+@route("/api/safe-mode/edit", methods=["POST"])
+def api_safe_mode_edit(handler: Handler) -> None:
+    import safe_mode
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    body = _read_body(handler) or {}
+    action_id = str(body.get("id", ""))
+    if not action_id:
+        handler._json_err("id fehlt", 400)
+        return
+    title = body.get("title")
+    payload = body.get("payload")
+    action_type = body.get("type")
+    handler._json_ok(safe_mode.edit(
+        action_id,
+        title=str(title) if title is not None else None,
+        payload=dict(payload) if isinstance(payload, dict) else None,
+        action_type=str(action_type) if action_type is not None else None,
+        user_email=email,
+    ))
+
+
+@route("/api/safe-mode/delete", methods=["POST"])
+def api_safe_mode_delete(handler: Handler) -> None:
+    import safe_mode
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    body = _read_body(handler) or {}
+    action_id = str(body.get("id", ""))
+    if not action_id:
+        handler._json_err("id fehlt", 400)
+        return
+    handler._json_ok(safe_mode.delete(action_id, user_email=email))
+
+
 # ---------------------------------------------------------------------------
 # Telegram / Google test
 # ---------------------------------------------------------------------------

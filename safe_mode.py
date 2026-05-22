@@ -64,6 +64,36 @@ def reject(action_id: str, user_email: str | None = None) -> dict[str, Any]:
     return {"ok": True, "action": updated}
 
 
+def edit(action_id: str, title: str | None = None, payload: dict[str, Any] | None = None, action_type: str | None = None, user_email: str | None = None) -> dict[str, Any]:
+    action = db.get_pending_action(action_id, user_email=user_email)
+    if not action:
+        return {"ok": False, "error": "Aktion nicht gefunden"}
+    if action["status"] != "pending":
+        return {"ok": False, "error": f"Nur pending Aktionen koennen bearbeitet werden: {action['status']}"}
+    if action_type is not None and action_type not in ALLOWED_ACTIONS:
+        return {"ok": False, "error": f"Unbekannter Aktionstyp: {action_type}"}
+    updated = db.edit_pending_action(
+        action_id,
+        title=title if title is not None else None,
+        payload=payload if payload is not None else None,
+        action_type=action_type if action_type is not None else None,
+        user_email=user_email,
+    )
+    if not updated:
+        return {"ok": False, "error": "Bearbeiten fehlgeschlagen"}
+    return {"ok": True, "action": updated}
+
+
+def delete(action_id: str, user_email: str | None = None) -> dict[str, Any]:
+    action = db.get_pending_action(action_id, user_email=user_email)
+    if not action:
+        return {"ok": False, "error": "Aktion nicht gefunden"}
+    ok = db.delete_pending_action(action_id, user_email=user_email)
+    if not ok:
+        return {"ok": False, "error": "Löschen fehlgeschlagen"}
+    return {"ok": True, "deleted_id": action_id}
+
+
 def approve_all(user_email: str | None = None) -> dict[str, Any]:
     actions = db.list_pending_actions(include_done=False, limit=500, user_email=user_email)
     if not actions:
