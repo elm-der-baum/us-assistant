@@ -63,6 +63,23 @@ Payload-Regeln:
 """
 
 
+def _user_temporal_context(user_email: str | None) -> str:
+    """Return a temporal+location context string for the given user."""
+    if not user_email:
+        tz_name = "UTC"
+        location = "Unbekannt"
+    else:
+        tz_name = (get_user_setting(user_email, "timezone") or "").strip() or "UTC"
+        location = (get_user_setting(user_email, "location") or "").strip() or "Unbekannt"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+        tz_name = "UTC"
+    now = datetime.now(tz)
+    return f"Aktuelle Zeit/Datum: {now.isoformat()} | Zeitzone: {tz_name} | Ort: {location}"
+
+
 def _settings(user_email: str | None = None) -> dict[str, str]:
     def val(key: str) -> str:
         if user_email:
@@ -217,6 +234,11 @@ def chat_completion(messages: list[dict[str, Any]], temperature: float = 0.2, us
         raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
 
     url = f"{s['base_url']}/chat/completions"
+    # inject temporal/location context as the first system message
+    if user_email:
+        temporal = _user_temporal_context(user_email)
+        messages = [{"role": "system", "content": temporal}] + list(messages)
+
     body = {
         "model": s["model"],
         "messages": messages,
@@ -319,14 +341,11 @@ def compact_context(existing_summary: str, messages: list[dict[str, str]], user_
 
 def propose_actions(user_text: str, context: str = "", user_email: str | None = None) -> list[dict[str, Any]]:
     """Use the LLM to transform write intent into Safe-Mode proposals."""
-    berlin = ZoneInfo("Europe/Berlin")
-    now = datetime.now(berlin)
     messages = [
         {"role": "system", "content": ACTION_SCHEMA_PROMPT},
         {
             "role": "system",
             "content": (
-                f"Heute/Jetzt: {now.isoformat()} | Zeitzone: Europe/Berlin.\n"
                 f"Kontext:\n{context[:6000]}"
             ),
         },
