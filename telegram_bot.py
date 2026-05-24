@@ -344,12 +344,13 @@ def _run_poll_loop() -> None:
                     if not msg:
                         continue
                     chat_id = int(msg["chat"]["id"])
-                    if chat_id != _allowed_user_id(user_email):
+                    cb = upd.get("callback_query")
+                    user = (cb.get("from") if cb else msg.get("from", {})) or {}
+                    sender_id = int(user.get("id") or 0)
+                    if sender_id != _allowed_user_id(user_email):
                         send_message(chat_id, "Nicht autorisiert.", user_email=user_email)
                         continue
-                    user = msg.get("from", {})
                     username = user.get("first_name", user.get("username", "?"))
-                    cb = upd.get("callback_query")
                     if cb:
                         _handle_callback(chat_id, str(cb.get("data", "")), user_email)
                     else:
