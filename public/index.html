@@ -170,12 +170,33 @@
 
   <div class="settings-section">
     <h3>🧠 AI <span class="scope-tag">pro Google Account</span></h3>
-    <p class="hint small-hint">OpenAI nutzbar über einen OpenAI API-Key von platform.openai.com. Ein ChatGPT Plus/Pro-Abo ist getrennt und kann nicht direkt als API-Key verwendet werden.</p>
+    <p class="hint small-hint">OpenAI nutzbar per API-Key oder per ChatGPT Plus/Pro OAuth (Codex, ohne API-Key). OAuth nutzt den pi.dev-ähnlichen Flow mit manueller Callback-URL.</p>
+    <div class="setting-row">
+      <label>Auth-Methode</label>
+      <select id="s-AI_AUTH_TYPE">
+        <option value="api_key">API-Key / OpenAI-compatible</option>
+        <option value="openai_codex_oauth">ChatGPT OAuth (Codex, ohne API-Key)</option>
+      </select>
+    </div>
+    <div id="openai-codex-box" class="oauth-box hidden">
+      <div id="openai-codex-status" class="muted">Status lädt…</div>
+      <div class="setting-actions">
+        <button id="btn-openai-codex-start" class="btn-secondary" type="button">ChatGPT verbinden</button>
+        <button id="btn-openai-codex-logout" class="btn-danger" type="button">OAuth trennen</button>
+      </div>
+      <p class="hint small-hint">Nach Login öffnet OpenAI <code>http://localhost:1455/auth/callback</code>. Wenn die Seite nicht lädt: vollständige Adresszeile hier einfügen.</p>
+      <textarea id="openai-codex-callback" rows="3" placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>
+      <div class="setting-actions">
+        <button id="btn-openai-codex-finish" class="btn-primary" type="button">OAuth abschließen</button>
+        <span id="openai-codex-result" class="test-result"></span>
+      </div>
+    </div>
     <div class="setting-row">
       <label>Schnellwahl</label>
       <div class="preset-row">
         <select id="ai-provider-preset">
           <option value="">Preset auswählen…</option>
+          <option value="chatgpt-codex-oauth">ChatGPT Plus/Pro OAuth – GPT-5.2 Codex</option>
           <option value="openai-gpt41-mini">OpenAI API – GPT-4.1 mini (empfohlen/günstig)</option>
           <option value="openai-gpt41">OpenAI API – GPT-4.1</option>
           <option value="openai-gpt4o">OpenAI API – GPT-4o</option>
@@ -259,6 +280,6 @@
 
 </main>
 
-<script src="static/app.js?v=25"></script>
+<script src="static/app.js?v=26"></script>
 </body>
 </html>

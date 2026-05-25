@@ -348,7 +348,7 @@ def api_get_settings(handler: Handler) -> None:
     APP_KEYS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
 
-    USER_KEYS = ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
+    USER_KEYS = ["AI_AUTH_TYPE", "AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     db.init_db()
@@ -377,7 +377,7 @@ def api_save_settings(handler: Handler) -> None:
 
     APP_KEYS = {"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"}
     APP_SECRETS = {"GOOGLE_CLIENT_SECRET"}
-    USER_KEYS = {"AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
+    USER_KEYS = {"AI_AUTH_TYPE", "AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"}
     USER_SECRETS = {"AI_API_KEY", "TELEGRAM_BOT_TOKEN"}
 
     app_vals: dict[str, str] = {}
@@ -891,6 +891,51 @@ def api_ai_test(handler: Handler) -> None:
         handler._json_err("Nicht eingeloggt", 401)
         return
     handler._json_ok(ai_client.test_connection(user_email=email))
+
+
+@route("/api/ai/openai-codex/status")
+def api_ai_openai_codex_status(handler: Handler) -> None:
+    import openai_codex_oauth
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok(openai_codex_oauth.status(email))
+
+
+@route("/api/ai/openai-codex/auth-url")
+def api_ai_openai_codex_auth_url(handler: Handler) -> None:
+    import openai_codex_oauth
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok(openai_codex_oauth.create_auth_url(email))
+
+
+@route("/api/ai/openai-codex/finish", methods=["POST"])
+def api_ai_openai_codex_finish(handler: Handler) -> None:
+    import openai_codex_oauth
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    body = _read_body(handler) or {}
+    result = openai_codex_oauth.finish_auth(email, str(body.get("callback", "") or body.get("code", "")))
+    if not result.get("ok"):
+        handler._json_err(str(result.get("error", "OpenAI OAuth fehlgeschlagen")), 400)
+        return
+    handler._json_ok(result)
+
+
+@route("/api/ai/openai-codex/logout", methods=["POST"])
+def api_ai_openai_codex_logout(handler: Handler) -> None:
+    import openai_codex_oauth
+    email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
+    handler._json_ok(openai_codex_oauth.logout(email))
 
 
 # ---------------------------------------------------------------------------

@@ -747,31 +747,43 @@ el("chat-form").addEventListener("submit", async (ev) => {
 
 // ---- Settings ----
 const AI_PRESETS = {
+  "chatgpt-codex-oauth": {
+    authType: "openai_codex_oauth",
+    baseUrl: "https://chatgpt.com/backend-api",
+    model: "gpt-5.2",
+    thinkEffort: "medium",
+    contextMaxTokens: "272000",
+  },
   "openai-gpt41-mini": {
+    authType: "api_key",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4.1-mini",
     thinkEffort: "",
     contextMaxTokens: "128000",
   },
   "openai-gpt41": {
+    authType: "api_key",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4.1",
     thinkEffort: "",
     contextMaxTokens: "128000",
   },
   "openai-gpt4o": {
+    authType: "api_key",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
     thinkEffort: "",
     contextMaxTokens: "128000",
   },
   "openai-reasoning": {
+    authType: "api_key",
     baseUrl: "https://api.openai.com/v1",
     model: "o4-mini",
     thinkEffort: "medium",
     contextMaxTokens: "128000",
   },
   "ollama-local": {
+    authType: "api_key",
     baseUrl: "http://127.0.0.1:11434/v1",
     model: "llama3.1",
     thinkEffort: "",
@@ -793,7 +805,10 @@ async function loadSettings() {
         inp.value = s.value || "";
       }
     });
+    if (!el("s-AI_AUTH_TYPE").value) el("s-AI_AUTH_TYPE").value = "api_key";
     syncAiPresetFromFields();
+    updateAiAuthMode();
+    await loadOpenAICodexStatus();
     checkGoogleAuthButton();
     await loadSystemStatus();
   } catch(e) {
@@ -804,7 +819,7 @@ async function loadSettings() {
 function getSettingValues(section) {
   const keys = {
     google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
-    ai: ["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location"],
+    ai: ["AI_AUTH_TYPE", "AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_THINK_EFFORT", "AI_CONTEXT_MAX_TOKENS", "timezone", "location"],
     telegram: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"],
   }[section];
   const secretKeys = new Set(["GOOGLE_CLIENT_SECRET", "AI_API_KEY", "TELEGRAM_BOT_TOKEN"]);
@@ -823,20 +838,44 @@ function applyAiPreset() {
   const select = el("ai-provider-preset");
   const preset = AI_PRESETS[select?.value || ""];
   if (!preset) return;
+  el("s-AI_AUTH_TYPE").value = preset.authType || "api_key";
   el("s-AI_BASE_URL").value = preset.baseUrl;
   el("s-AI_MODEL").value = preset.model;
   el("s-AI_THINK_EFFORT").value = preset.thinkEffort;
   el("s-AI_CONTEXT_MAX_TOKENS").value = preset.contextMaxTokens;
+  updateAiAuthMode();
 }
 
 function syncAiPresetFromFields() {
   const select = el("ai-provider-preset");
   if (!select) return;
+  const authType = (el("s-AI_AUTH_TYPE")?.value || "api_key").trim();
   const base = (el("s-AI_BASE_URL")?.value || "").trim().replace(/\/$/, "");
   const model = (el("s-AI_MODEL")?.value || "").trim();
   const think = (el("s-AI_THINK_EFFORT")?.value || "").trim();
-  const match = Object.entries(AI_PRESETS).find(([, p]) => p.baseUrl === base && p.model === model && p.thinkEffort === think);
+  const match = Object.entries(AI_PRESETS).find(([, p]) => (p.authType || "api_key") === authType && p.baseUrl === base && p.model === model && p.thinkEffort === think);
   select.value = match ? match[0] : "";
+}
+
+function updateAiAuthMode() {
+  const mode = el("s-AI_AUTH_TYPE")?.value || "api_key";
+  el("openai-codex-box")?.classList.toggle("hidden", mode !== "openai_codex_oauth");
+}
+
+async function loadOpenAICodexStatus() {
+  const statusEl = el("openai-codex-status");
+  if (!statusEl || !__state.loggedIn) return;
+  try {
+    const res = await api("GET", "/api/ai/openai-codex/status");
+    if (res.configured) {
+      const mins = Math.floor((res.expires_in || 0) / 60);
+      statusEl.textContent = `✅ ChatGPT OAuth verbunden · Account: ${res.account_id || "?"} · Token noch ca. ${mins} min gültig`;
+    } else {
+      statusEl.textContent = "Nicht verbunden.";
+    }
+  } catch (e) {
+    statusEl.textContent = "Status nicht verfügbar: " + e.message;
+  }
 }
 
 function checkGoogleAuthButton() {
@@ -853,12 +892,53 @@ function checkGoogleAuthButton() {
 
 document.addEventListener("input", (ev) => {
   if (ev.target.id === "s-GOOGLE_CLIENT_ID") checkGoogleAuthButton();
-  if (["s-AI_BASE_URL", "s-AI_MODEL", "s-AI_THINK_EFFORT"].includes(ev.target.id)) syncAiPresetFromFields();
+  if (["s-AI_AUTH_TYPE", "s-AI_BASE_URL", "s-AI_MODEL", "s-AI_THINK_EFFORT"].includes(ev.target.id)) syncAiPresetFromFields();
   if (ev.target.type === "password") ev.target.dataset.hasValue = "0";
+});
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "s-AI_AUTH_TYPE") { updateAiAuthMode(); syncAiPresetFromFields(); }
 });
 
 el("btn-apply-ai-preset").addEventListener("click", applyAiPreset);
 el("ai-provider-preset").addEventListener("change", applyAiPreset);
+
+el("btn-openai-codex-start").addEventListener("click", async () => {
+  if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
+  const r = el("openai-codex-result");
+  r.textContent = "Starte OAuth…";
+  const res = await api("GET", "/api/ai/openai-codex/auth-url");
+  if (res.url) {
+    window.open(res.url, "_blank", "noopener");
+    r.textContent = "OpenAI-Login geöffnet. Danach Callback-URL hier einfügen.";
+  } else {
+    r.textContent = "❌ " + (res.error || "Fehler");
+  }
+});
+
+el("btn-openai-codex-finish").addEventListener("click", async () => {
+  if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
+  const r = el("openai-codex-result");
+  const callback = el("openai-codex-callback").value.trim();
+  if (!callback) { r.textContent = "Bitte Callback-URL einfügen."; return; }
+  r.textContent = "Schließe OAuth ab…";
+  const res = await api("POST", "/api/ai/openai-codex/finish", { callback });
+  if (res.ok) {
+    r.textContent = "✅ Verbunden.";
+    el("s-AI_AUTH_TYPE").value = "openai_codex_oauth";
+    await loadSettings();
+  } else {
+    r.textContent = "❌ " + (res.error || "Fehler");
+  }
+});
+
+el("btn-openai-codex-logout").addEventListener("click", async () => {
+  if (!__state.loggedIn) { alert("Bitte zuerst mit Google anmelden."); return; }
+  if (!confirm("ChatGPT OAuth wirklich trennen?")) return;
+  await api("POST", "/api/ai/openai-codex/logout");
+  el("s-AI_AUTH_TYPE").value = "api_key";
+  await loadSettings();
+});
 
 // ---- Setup Modal ----
 function showSetupModal() {

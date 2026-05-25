@@ -90,6 +90,7 @@ def _settings(user_email: str | None = None) -> dict[str, str]:
         return get_setting(key, "") or ""
 
     return {
+        "auth_type": val("AI_AUTH_TYPE") or "api_key",
         "base_url": val("AI_BASE_URL").rstrip("/"),
         "api_key": val("AI_API_KEY"),
         "model": val("AI_MODEL"),
@@ -99,6 +100,9 @@ def _settings(user_email: str | None = None) -> dict[str, str]:
 
 def configured(user_email: str | None = None) -> bool:
     s = _settings(user_email)
+    if s.get("auth_type") == "openai_codex_oauth":
+        import openai_codex_oauth
+        return bool(user_email and s["model"] and openai_codex_oauth.oauth_configured(user_email))
     return bool(s["base_url"] and s["api_key"] and s["model"])
 
 
@@ -107,7 +111,10 @@ def estimate_tokens(text: str) -> int:
 
 
 def provider_name(user_email: str | None = None) -> str:
-    base_url = _settings(user_email)["base_url"]
+    s = _settings(user_email)
+    if s.get("auth_type") == "openai_codex_oauth":
+        return "OpenAI ChatGPT OAuth (Codex)"
+    base_url = s["base_url"]
     host = urllib.parse.urlparse(base_url).netloc.lower()
     if "openai" in host:
         return "OpenAI"
@@ -131,8 +138,8 @@ def model_context_max(user_email: str | None = None) -> int:
     if override and str(override).isdigit():
         return int(str(override))
     model = model_name(user_email).lower()
-    if any(k in model for k in ["gpt-4.1", "gpt-4o", "o3", "o4", "gemini", "claude-3.5", "claude-3-5"]):
-        return 128000
+    if any(k in model for k in ["gpt-5", "gpt-4.1", "gpt-4o", "o3", "o4", "gemini", "claude-3.5", "claude-3-5"]):
+        return 272000 if "gpt-5" in model else 128000
     if any(k in model for k in ["qwen", "llama3.1", "llama-3.1", "mistral-large"]):
         return 128000
     if any(k in model for k in ["llama", "mistral", "mixtral"]):
@@ -151,7 +158,7 @@ def context_info(user_email: str | None = None) -> dict[str, Any]:
 
 def _supports_vision(user_email: str | None = None) -> bool:
     model = model_name(user_email).lower()
-    return any(k in model for k in ["gpt-4o", "gpt-4.1", "o3", "o4", "gemini", "claude-3", "claude-3.5", "llava", "vision", "qwen-vl", "qwen2-vl"])
+    return any(k in model for k in ["gpt-5", "gpt-4o", "gpt-4.1", "o3", "o4", "gemini", "claude-3", "claude-3.5", "llava", "vision", "qwen-vl", "qwen2-vl"])
 
 
 def _attachment_text_content(atch: dict[str, Any]) -> str:
@@ -231,14 +238,27 @@ def _attachment_to_content(atch: dict[str, Any], user_email: str | None = None) 
 def chat_completion(messages: list[dict[str, Any]], temperature: float = 0.2, user_email: str | None = None, timeout_seconds: int | None = None) -> str:
     s = _settings(user_email)
     if not configured(user_email):
-        raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und AI_BASE_URL, AI_API_KEY, AI_MODEL setzen.")
+        raise RuntimeError("AI nicht konfiguriert. Bitte Settings öffnen und API-Key oder ChatGPT-OAuth verbinden sowie Modell setzen.")
 
-    url = f"{s['base_url']}/chat/completions"
     # inject temporal/location context as the first system message
     if user_email:
         temporal = _user_temporal_context(user_email)
         messages = [{"role": "system", "content": temporal}] + list(messages)
 
+    if s.get("auth_type") == "openai_codex_oauth":
+        if not user_email:
+            raise RuntimeError("OpenAI OAuth benötigt Login")
+        import openai_codex_oauth
+        return openai_codex_oauth.codex_chat_completion(
+            messages,
+            user_email=user_email,
+            model=s["model"],
+            think_effort=s.get("think_effort", ""),
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+        )
+
+    url = f"{s['base_url']}/chat/completions"
     body = {
         "model": s["model"],
         "messages": messages,

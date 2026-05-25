@@ -337,13 +337,21 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   align-items: center; margin-bottom: 10px;
 }
 .setting-row label { color: var(--muted); font-size: 13px; }
-.setting-row input, .secret-field input, .setting-row select {
+.setting-row input, .secret-field input, .setting-row select, .oauth-box textarea {
   width: 100%;
   border: 1px solid var(--line); background: #0e1730; color: var(--text);
   border-radius: 12px; padding: 11px 12px;
 }
 .secret-field { display: grid; grid-template-columns: 1fr 46px; gap: 6px; }
 .preset-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.oauth-box {
+  border: 1px solid var(--line);
+  background: rgba(124,156,255,.08);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.oauth-box textarea { resize: vertical; margin-top: 4px; }
 .toggle-pw { background: #26345f; color: var(--text); }
 .setting-actions {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px;

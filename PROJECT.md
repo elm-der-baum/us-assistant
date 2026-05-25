@@ -8,7 +8,7 @@ Kontrollierter Schreibzugriff über Safe-Mode-Genehmigung. Auch Import/Restore l
 - Backend: Python 3.12 (http.server, urllib, sqlite3) + fpdf2 für PDF-Export
 - Frontend: Vanilla JS, CSS
 - Auth: Google OAuth2 → Session-Cookie (`assistant_sid`, 30 Tage)
-- KI: OpenAI-compatible API; UI-Presets für OpenAI API (`https://api.openai.com/v1`) und Ollama lokal
+- KI: OpenAI-compatible API; UI-Presets für OpenAI API (`https://api.openai.com/v1`), Ollama lokal und ChatGPT OAuth/Codex ohne API-Key
 - Chat: Web-UI + Telegram Long Polling
 - DB: SQLite (users, sessions, user_settings, pending_actions, chat_messages + system settings)
 - Port: 9400
@@ -57,7 +57,8 @@ python3 server.py
 ## Secrets (nur in SQLite, nie Git)
 - System: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - Pro User: `AI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `AI_MODEL`, `AI_BASE_URL`, `TELEGRAM_ALLOWED_USER_ID`
-- OpenAI: benötigt OpenAI API-Key/Billing; ChatGPT Plus/Pro-Abo allein ist keine API-Nutzung.
+- OpenAI API-Key: benötigt OpenAI API-Key/Billing.
+- ChatGPT OAuth/Codex: nutzt ChatGPT Plus/Pro-Login ohne API-Key; OAuth-Tokens liegen als Secret in SQLite.
 
 ## Deployment
 - systemd: `assistant.service`
