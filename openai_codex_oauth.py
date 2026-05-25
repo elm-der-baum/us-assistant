@@ -414,8 +414,9 @@ def codex_chat_completion(
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
-    if temperature is not None:
-        body["temperature"] = temperature
+    # ChatGPT/Codex subscription endpoint rejects the OpenAI-compatible
+    # `temperature` parameter (HTTP 400: Unsupported parameter). Keep the
+    # argument for the generic ai_client interface, but do not send it here.
     effort = _reasoning_effort(think_effort)
     if effort:
         body["reasoning"] = {"effort": effort, "summary": "auto"}
