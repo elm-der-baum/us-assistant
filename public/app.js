@@ -910,7 +910,7 @@ el("btn-openai-codex-start").addEventListener("click", async () => {
   const res = await api("GET", "/api/ai/openai-codex/auth-url");
   if (res.url) {
     window.open(res.url, "_blank", "noopener");
-    r.textContent = "OpenAI-Login geöffnet. Danach Callback-URL hier einfügen.";
+    r.textContent = "OpenAI-Login geöffnet. Wenn localhost:1455 nicht erreichbar ist: das ist normal – vollständige URL aus der Adresszeile kopieren und hier einfügen.";
   } else {
     r.textContent = "❌ " + (res.error || "Fehler");
   }

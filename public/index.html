@@ -184,7 +184,7 @@
         <button id="btn-openai-codex-start" class="btn-secondary" type="button">ChatGPT verbinden</button>
         <button id="btn-openai-codex-logout" class="btn-danger" type="button">OAuth trennen</button>
       </div>
-      <p class="hint small-hint">Nach Login öffnet OpenAI <code>http://localhost:1455/auth/callback</code>. Wenn die Seite nicht lädt: vollständige Adresszeile hier einfügen.</p>
+      <p class="hint small-hint"><strong>Wichtig:</strong> Die Seite <code>localhost:1455</code> zeigt auf dem Handy/Browser oft <em>ERR_CONNECTION_REFUSED</em>. Das ist normal. Tippe auf die Adresszeile bzw. ⋮ → Link kopieren und füge die vollständige URL mit <code>?code=...&state=...</code> hier ein.</p>
       <textarea id="openai-codex-callback" rows="3" placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>
       <div class="setting-actions">
         <button id="btn-openai-codex-finish" class="btn-primary" type="button">OAuth abschließen</button>
@@ -280,6 +280,6 @@
 
 </main>
 
-<script src="static/app.js?v=26"></script>
+<script src="static/app.js?v=27"></script>
 </body>
 </html>
