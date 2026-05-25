@@ -20,6 +20,8 @@ ALLOWED_ACTIONS = {
     "create_tasklist",
     "update_tasklist",
     "delete_tasklist",
+    "import_tasks",
+    "restore_backup",
 }
 
 
@@ -162,6 +164,19 @@ def execute(action: dict[str, Any], user_email: str | None = None) -> dict[str, 
     action_type = action["type"]
     payload = dict(action.get("payload") or {})
 
+    if action_type == "import_tasks":
+        return _import_tasks(payload, user_email=user_email)
+
+    if action_type == "restore_backup":
+        import backup
+        area = str(payload.get("area", ""))
+        backup_id = str(payload.get("backup_id", ""))
+        if area not in {"tasks", "calendar"} or not backup_id:
+            return {"error": "area/backup_id fehlt"}
+        if not user_email:
+            return {"error": "user_email fehlt"}
+        return backup.apply_backup(area, backup_id, user_email)
+
     if action_type == "create_calendar_event":
         calendar_id = payload.pop("calendar_id", "primary")
         return gc.create_event(str(calendar_id), payload, email=user_email)
@@ -230,6 +245,64 @@ def execute(action: dict[str, Any], user_email: str | None = None) -> dict[str, 
         return gc.delete_tasklist(tasklist_id, email=user_email)
 
     return {"error": f"Unbekannte Aktion: {action_type}"}
+
+
+def _import_tasks(payload: dict[str, Any], user_email: str | None = None) -> dict[str, Any]:
+    if not user_email:
+        return {"error": "user_email fehlt"}
+    tasklists = payload.get("tasklists", [])
+    if not isinstance(tasklists, list):
+        return {"error": "tasklists fehlt oder ist ungültig"}
+
+    existing = gc.list_tasklists(email=user_email)
+    if _is_error(existing):
+        return existing
+    list_by_title: dict[str, str] = {}
+    list_by_id: dict[str, str] = {}
+    for tl in existing.get("items", []):
+        list_by_title[str(tl.get("title", "")).strip().lower()] = str(tl.get("id", ""))
+        list_by_id[str(tl.get("id", ""))] = str(tl.get("id", ""))
+
+    created = 0
+    errors: list[Any] = []
+    for tl_data in tasklists:
+        if not isinstance(tl_data, dict):
+            errors.append({"error": "Ungültige Aufgabenliste im Import"})
+            continue
+        tl_title = str(tl_data.get("title", "")).strip()
+        tl_id = str(tl_data.get("id", "")).strip()
+        actual_id = list_by_id.get(tl_id) or list_by_title.get(tl_title.lower())
+        if not actual_id:
+            if tl_title:
+                new_list = gc.create_tasklist(tl_title, email=user_email)
+                if _is_error(new_list):
+                    errors.append(new_list)
+                    continue
+                actual_id = str(new_list.get("id", ""))
+                if actual_id:
+                    list_by_title[tl_title.lower()] = actual_id
+            if not actual_id:
+                actual_id = gc.get_tasklist_id(email=user_email) or ""
+        if not actual_id:
+            errors.append({"error": f"Keine Aufgabenliste für Import gefunden: {tl_title or tl_id}"})
+            continue
+        for task in tl_data.get("tasks", []) or []:
+            if not isinstance(task, dict):
+                errors.append({"error": "Ungültige Aufgabe im Import"})
+                continue
+            task_payload: dict[str, Any] = {"title": str(task.get("title", "Unbenannt"))}
+            if task.get("notes"):
+                task_payload["notes"] = str(task["notes"])
+            if task.get("due"):
+                task_payload["due"] = str(task["due"])
+            if task.get("status") == "completed":
+                task_payload["status"] = "completed"
+            res = gc.create_task(actual_id, task_payload, email=user_email)
+            if _is_error(res):
+                errors.append(res)
+            else:
+                created += 1
+    return {"ok": not errors, "created": created, "errors": errors, "error_count": len(errors)}
 
 
 def _move_task(payload: dict[str, Any], user_email: str | None = None) -> dict[str, Any]:

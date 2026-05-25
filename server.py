@@ -5,19 +5,32 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import threading
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 PORT = int(os.environ.get("ASSISTANT_PORT", "9400"))
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "public"
 SESSION_COOKIE = "assistant_sid"
+OAUTH_STATE_COOKIE = "assistant_oauth_state"
 SESSION_MAX_AGE = 30 * 86400  # 30 days
+MAX_UPLOAD_BYTES = int(os.environ.get("ASSISTANT_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+DEFAULT_ALLOWED_ORIGINS = {"https://findyou.biz", "https://www.findyou.biz"}
+
+
+def _allowed_origins() -> set[str]:
+    configured = {
+        origin.strip().rstrip("/")
+        for origin in os.environ.get("ASSISTANT_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    }
+    return configured or DEFAULT_ALLOWED_ORIGINS
 
 # ---------------------------------------------------------------------------
 # Routing
@@ -95,28 +108,63 @@ def _clear_session_cookie(handler: Handler) -> None:
     )
 
 
+def _get_cookie_value(handler: Handler, name: str) -> str:
+    cookie_header = handler.headers.get("Cookie", "")
+    if not cookie_header:
+        return ""
+    c = SimpleCookie()
+    c.load(cookie_header)
+    morsel = c.get(name)
+    return str(morsel.value) if morsel else ""
+
+
+def _set_oauth_state_cookie(handler: Handler, state: str) -> None:
+    handler.send_header(
+        "Set-Cookie",
+        f"{OAUTH_STATE_COOKIE}={state}; Path=/assistant/; Max-Age=600; HttpOnly; SameSite=Lax; Secure",
+    )
+
+
+def _clear_oauth_state_cookie(handler: Handler) -> None:
+    handler.send_header(
+        "Set-Cookie",
+        f"{OAUTH_STATE_COOKIE}=; Path=/assistant/; Max-Age=0; HttpOnly; SameSite=Lax; Secure",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
 
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin in _allowed_origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.send_header("Access-Control-Allow-Credentials", "true")
+
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin", "").rstrip("/")
+        return not origin or origin in _allowed_origins()
 
     def log_message(self, format, *args):
         sys.stderr.write(f"[assistant] {args[0]}\n")
 
     def _route(self) -> None:
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = unquote(parsed.path)
         if path == "/assistant":
             path = "/"
         elif path.startswith("/assistant/"):
             path = path[len("/assistant"):]
         method = self.command
+
+        if method in {"POST", "PUT", "PATCH", "DELETE"} and not self._origin_allowed():
+            _json(self, {"error": "origin_not_allowed"}, 403)
+            return
 
         if path in ROUTES and method in ROUTES[path]:
             return ROUTES[path][method](self)
@@ -159,9 +207,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             path = "/index.html"
         if not path.startswith("/static/"):
-            file_path = PUBLIC_DIR / path.lstrip("/")
+            rel_path = path.lstrip("/")
         else:
-            file_path = PUBLIC_DIR / path[len("/static/"):]
+            rel_path = path[len("/static/"):]
+
+        public_root = PUBLIC_DIR.resolve()
+        file_path = (public_root / rel_path).resolve()
+        try:
+            file_path.relative_to(public_root)
+        except ValueError:
+            _json(self, {"error": "not_found"}, 404)
+            return
 
         mime_map = {
             ".html": "text/html; charset=utf-8",
@@ -222,6 +278,21 @@ def _app_configured() -> bool:
     return bool(db.get_setting("GOOGLE_CLIENT_ID", "") and db.get_setting("GOOGLE_CLIENT_SECRET", ""))
 
 
+def _admin_emails() -> set[str]:
+    return {
+        email.strip().lower()
+        for email in os.environ.get("ASSISTANT_ADMIN_EMAILS", "").split(",")
+        if email.strip()
+    }
+
+
+def _can_manage_app_settings(email: str | None) -> bool:
+    if not email:
+        return False
+    admins = _admin_emails()
+    return not admins or email.strip().lower() in admins
+
+
 @route("/api/auth/logout", methods=["POST"])
 def api_auth_logout(handler: Handler) -> None:
     import db
@@ -232,8 +303,14 @@ def api_auth_logout(handler: Handler) -> None:
         sid = c.get(SESSION_COOKIE)
         if sid:
             db.delete_session(str(sid.value))
+    body = json.dumps({"ok": True}, ensure_ascii=False).encode()
+    handler.send_response(200)
+    handler._cors()
     _clear_session_cookie(handler)
-    handler._json_ok({"ok": True})
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +393,11 @@ def api_save_settings(handler: Handler) -> None:
             user_vals[k] = v
 
     if app_vals:
+        # Initial OAuth setup must be possible before Google login. Once configured,
+        # changing system OAuth secrets requires an authenticated admin user.
+        if _app_configured() and not _can_manage_app_settings(email):
+            handler._json_err("Nicht eingeloggt oder nicht berechtigt", 401)
+            return
         db.set_settings(app_vals, secret_keys=APP_SECRETS & set(app_vals))
     if user_vals:
         db.set_user_settings(email, user_vals, secret_keys=USER_SECRETS & set(user_vals))
@@ -335,11 +417,17 @@ def api_reveal_secret(handler: Handler) -> None:
     if key not in ALLOWED:
         handler._json_err("Nicht erlaubt", 403)
         return
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
 
     if key == "GOOGLE_CLIENT_SECRET":
+        if not _can_manage_app_settings(email):
+            handler._json_err("Nicht berechtigt", 403)
+            return
         value = db.get_setting(key, "")
     else:
-        value = db.get_user_setting(email, key, "") if email else ""
+        value = db.get_user_setting(email, key, "")
     handler._json_ok({"key": key, "value": value})
 
 
@@ -369,11 +457,19 @@ def api_google_auth_url(handler: Handler) -> None:
     if not gc.app_configured():
         handler._json_err("GOOGLE_CLIENT_ID nicht konfiguriert", 400)
         return
-    url = gc.get_oauth_url()
+    state = secrets.token_urlsafe(32)
+    url = gc.get_oauth_url(state=state)
     if not url:
         handler._json_err("Fehler beim Erstellen der Auth-URL", 500)
         return
-    handler._json_ok({"url": url})
+    body = json.dumps({"url": url}, ensure_ascii=False).encode()
+    handler.send_response(200)
+    handler._cors()
+    _set_oauth_state_cookie(handler, state)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 @route("/oauth/callback")
@@ -381,16 +477,21 @@ def api_google_auth_url(handler: Handler) -> None:
 def api_google_callback(handler: Handler) -> None:
     import google_client as gc
     import db
-    code = handler._query().get("code", "")
-    if not code:
+    q = handler._query()
+    code = q.get("code", "")
+    state = str(q.get("state", ""))
+    expected_state = _get_cookie_value(handler, OAUTH_STATE_COOKIE)
+    if not code or not state or not expected_state or not secrets.compare_digest(state, expected_state):
         handler.send_response(302)
-        handler.send_header("Location", "/assistant/")
+        _clear_oauth_state_cookie(handler)
+        handler.send_header("Location", "/assistant/?google_error=1")
         handler.end_headers()
         return
 
     token = gc.exchange_code(str(code))
     if "error" in token or "access_token" not in token:
         handler.send_response(302)
+        _clear_oauth_state_cookie(handler)
         handler.send_header("Location", "/assistant/?google_error=1")
         handler.end_headers()
         return
@@ -399,6 +500,7 @@ def api_google_callback(handler: Handler) -> None:
     user_info = gc.get_user_info(access_token)
     if "error" in user_info or "email" not in user_info:
         handler.send_response(302)
+        _clear_oauth_state_cookie(handler)
         handler.send_header("Location", "/assistant/?google_error=1")
         handler.end_headers()
         return
@@ -416,6 +518,7 @@ def api_google_callback(handler: Handler) -> None:
     session_id = db.create_session(email)
 
     handler.send_response(302)
+    _clear_oauth_state_cookie(handler)
     _set_session_cookie(handler, session_id)
     handler.send_header("Location", "/assistant/?google_ok=1")
     handler.end_headers()
@@ -432,6 +535,8 @@ def _parse_multipart(handler: Handler) -> dict[str, Any]:
         return {}
     boundary = content_type.split("boundary=")[1].split(";")[0].strip('"')
     length = int(handler.headers.get("Content-Length", 0))
+    if length > MAX_UPLOAD_BYTES:
+        raise ValueError(f"Upload zu groß (max. {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
     raw = handler.rfile.read(length)
     parts = raw.split(b"--" + boundary.encode())
     files: dict[str, Any] = {}
@@ -555,13 +660,17 @@ def api_upload(handler: Handler) -> None:
     if not email:
         handler._json_err("Nicht eingeloggt", 401)
         return
-    files = _parse_multipart(handler)
+    try:
+        files = _parse_multipart(handler)
+    except ValueError as exc:
+        handler._json_err(str(exc), 413)
+        return
     file_info = files.get("file")
     if not file_info or "data" not in file_info:
         handler._json_err("file fehlt", 400)
         return
     data = file_info["data"]
-    filename = file_info["filename"] or "upload"
+    filename = Path(str(file_info["filename"] or "upload")).name or "upload"
     mime = _detect_mime(filename, data)
     upload = db.create_upload(email, filename, mime, len(data), data)
     handler._json_ok({
@@ -569,7 +678,7 @@ def api_upload(handler: Handler) -> None:
         "filename": upload["filename"],
         "mime_type": upload["mime_type"],
         "size": upload["size"],
-        "url": f"/api/upload/{upload['id']}",
+        "url": f"api/upload/{upload['id']}",
     })
 
 
@@ -577,6 +686,9 @@ def api_upload(handler: Handler) -> None:
 def api_upload_get(handler: Handler, upload_id: str = "") -> None:
     import db
     email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
     upload = db.get_upload(upload_id, user_email=email)
     if not upload:
         handler._json_err("Nicht gefunden", 404)
@@ -589,9 +701,10 @@ def api_upload_get(handler: Handler, upload_id: str = "") -> None:
     mime = upload.get("mime_type", "application/octet-stream")
     handler.send_response(200)
     handler._cors()
+    safe_name = Path(str(upload.get("filename", "upload"))).name.replace('"', "_").replace("\r", "_").replace("\n", "_")
     handler.send_header("Content-Type", mime)
     handler.send_header("Content-Length", str(len(data)))
-    handler.send_header("Content-Disposition", f'inline; filename="{upload["filename"]}"')
+    handler.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
     handler.end_headers()
     handler.wfile.write(data)
 
@@ -774,6 +887,9 @@ def api_chat_pending(handler: Handler) -> None:
 def api_ai_test(handler: Handler) -> None:
     import ai_client
     email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
     handler._json_ok(ai_client.test_connection(user_email=email))
 
 
@@ -873,7 +989,7 @@ def api_tasks_export(handler: Handler) -> None:
 
 @route("/api/tasks/import", methods=["POST"])
 def api_tasks_import(handler: Handler) -> None:
-    import google_client as gc
+    import safe_mode
     email = _get_session_email(handler)
     if not email:
         handler._json_err("Nicht eingeloggt", 401)
@@ -887,51 +1003,18 @@ def api_tasks_import(handler: Handler) -> None:
     except json.JSONDecodeError:
         handler._json_err("Ungültiges JSON", 400)
         return
-    if not isinstance(data, dict) or "tasklists" not in data:
+    if not isinstance(data, dict) or not isinstance(data.get("tasklists"), list):
         handler._json_err('JSON muss {"tasklists": [...]} enthalten', 400)
         return
-    # Build existing-list index by title
-    existing = gc.list_tasklists(email=email)
-    list_by_title: dict[str, str] = {}
-    list_by_id: dict[str, str] = {}
-    for tl in existing.get("items", []):
-        list_by_title[str(tl.get("title", "")).lower()] = str(tl.get("id", ""))
-        list_by_id[str(tl.get("id", ""))] = str(tl.get("id", ""))
-    created = 0
-    errors = 0
-    for tl_data in data.get("tasklists", []):
-        tl_title = str(tl_data.get("title", ""))
-        tl_id = tl_data.get("id", "")
-        # Find or create list
-        actual_id = list_by_id.get(str(tl_id)) or list_by_title.get(tl_title.lower())
-        if not actual_id:
-            if tl_title:
-                new_list = gc.create_tasklist(tl_title, email=email)
-                actual_id = new_list.get("id", "")
-                if actual_id:
-                    list_by_title[tl_title.lower()] = actual_id
-            if not actual_id:
-                # fallback to first list
-                actual_id = gc.get_tasklist_id(email=email)
-        if not actual_id:
-            errors += len(tl_data.get("tasks", []))
-            continue
-        for task in tl_data.get("tasks", []):
-            try:
-                payload = {
-                    "title": str(task.get("title", "Unbenannt")),
-                }
-                if task.get("notes"):
-                    payload["notes"] = str(task["notes"])
-                if task.get("due"):
-                    payload["due"] = str(task["due"])
-                if task.get("status") == "completed":
-                    payload["status"] = "completed"
-                gc.create_task(actual_id, payload, email=email)
-                created += 1
-            except Exception:
-                errors += 1
-    handler._json_ok({"created": created, "errors": errors})
+    task_count = sum(len(tl.get("tasks", [])) for tl in data.get("tasklists", []) if isinstance(tl, dict))
+    action = safe_mode.create(
+        "import_tasks",
+        f"Tasks importieren ({task_count} Aufgaben)",
+        {"tasklists": data.get("tasklists", [])},
+        source="web",
+        user_email=email,
+    )
+    handler._json_ok({"ok": True, "pending": True, "action": action})
 
 
 @route("/api/backups")
@@ -950,7 +1033,7 @@ def api_backups(handler: Handler) -> None:
 
 @route("/api/backups/apply", methods=["POST"])
 def api_backups_apply(handler: Handler) -> None:
-    import backup
+    import backup, safe_mode
     email = _get_session_email(handler)
     if not email:
         handler._json_err("Nicht eingeloggt", 401)
@@ -961,7 +1044,17 @@ def api_backups_apply(handler: Handler) -> None:
     if area not in {"tasks", "calendar"} or not backup_id:
         handler._json_err("area/id fehlt", 400)
         return
-    handler._json_ok(backup.apply_backup(area, backup_id, email))
+    if not any(b.get("id") == backup_id for b in backup.list_backups(area, email)):
+        handler._json_err("Backup nicht gefunden", 404)
+        return
+    action = safe_mode.create(
+        "restore_backup",
+        f"{area}-Backup wiederherstellen: {backup_id}",
+        {"area": area, "backup_id": backup_id},
+        source="web",
+        user_email=email,
+    )
+    handler._json_ok({"ok": True, "pending": True, "action": action})
 
 
 @route("/api/tasks/export/pdf")
@@ -1132,6 +1225,9 @@ def api_safe_mode_delete(handler: Handler) -> None:
 def api_telegram_test(handler: Handler) -> None:
     import telegram_bot as tg
     email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
     handler._json_ok(tg.test_connection(user_email=email))
 
 
@@ -1139,6 +1235,9 @@ def api_telegram_test(handler: Handler) -> None:
 def api_google_test(handler: Handler) -> None:
     import google_client as gc
     email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
     handler._json_ok(gc.test_connection(email=email))
 
 
@@ -1149,6 +1248,9 @@ def api_google_test(handler: Handler) -> None:
 def api_chat_messages(handler: Handler) -> None:
     import db
     email = _get_session_email(handler)
+    if not email:
+        handler._json_err("Nicht eingeloggt", 401)
+        return
     channel = str(handler._query().get("channel", "web"))
     handler._json_ok({"messages": db.recent_chat_messages(channel, limit=50, user_email=email)})
 

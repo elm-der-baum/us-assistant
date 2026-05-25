@@ -13,6 +13,39 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("ASSISTANT_DB", BASE_DIR / "assistant.db"))
+DATA_DIR = BASE_DIR / "data"
+UPLOAD_DIR = DATA_DIR / "uploads"
+
+os.umask(0o077)
+
+
+def _chmod_if_exists(path: Path, mode: int) -> None:
+    try:
+        if path.exists():
+            os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def _harden_storage_permissions() -> None:
+    for directory in (DATA_DIR, UPLOAD_DIR, DATA_DIR / "backups"):
+        try:
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+    for root in (UPLOAD_DIR, DATA_DIR / "backups"):
+        if not root.exists():
+            continue
+        for dirpath, _dirnames, filenames in os.walk(root):
+            try:
+                os.chmod(dirpath, 0o700)
+            except OSError:
+                pass
+            for filename in filenames:
+                _chmod_if_exists(Path(dirpath) / filename, 0o600)
+    for file_path in (DB_PATH, DB_PATH.with_name(DB_PATH.name + "-wal"), DB_PATH.with_name(DB_PATH.name + "-shm")):
+        _chmod_if_exists(file_path, 0o600)
 
 
 def _connect() -> sqlite3.Connection:
@@ -35,6 +68,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _harden_storage_permissions()
     with _connect() as conn:
         conn.executescript(
             """
@@ -129,6 +163,7 @@ def init_db() -> None:
         _ensure_column(conn, "chat_messages", "user_email", "user_email TEXT")
         _ensure_column(conn, "chat_contexts", "processing", "processing INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "chat_messages", "attachments_json", "attachments_json TEXT NOT NULL DEFAULT ''")
+    _harden_storage_permissions()
 
 
 # ---------------------------------------------------------------------------
@@ -662,24 +697,24 @@ def _pending_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Uploads
 # ---------------------------------------------------------------------------
-UPLOAD_DIR = BASE_DIR / "data" / "uploads"
-
-
 def create_upload(user_email: str | None, filename: str, mime_type: str, size: int, data: bytes) -> dict[str, Any]:
     init_db()
     upload_id = uuid.uuid4().hex[:16]
     ts = now_ts()
     email = user_email.strip().lower() if user_email else None
+    safe_filename = Path(str(filename)).name or "upload"
     user_dir = UPLOAD_DIR / (email or "anonymous")
-    user_dir.mkdir(parents=True, exist_ok=True)
-    file_path = user_dir / f"{upload_id}_{filename}"
+    user_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(user_dir, 0o700)
+    file_path = user_dir / f"{upload_id}_{safe_filename}"
     file_path.write_bytes(data)
+    os.chmod(file_path, 0o600)
     with _connect() as conn:
         conn.execute(
             "INSERT INTO uploads(id, user_email, filename, mime_type, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (upload_id, email, filename, mime_type, size, str(file_path.relative_to(BASE_DIR)), ts),
+            (upload_id, email, safe_filename, mime_type, size, str(file_path.relative_to(BASE_DIR)), ts),
         )
-    return {"id": upload_id, "user_email": email, "filename": filename, "mime_type": mime_type, "size": size, "created_at": ts}
+    return {"id": upload_id, "user_email": email, "filename": safe_filename, "mime_type": mime_type, "size": size, "created_at": ts}
 
 
 def get_upload(upload_id: str, user_email: str | None = None) -> dict[str, Any] | None:

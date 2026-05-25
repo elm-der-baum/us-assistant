@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +17,8 @@ BASE_DIR = Path(__file__).resolve().parent
 BACKUP_DIR = BASE_DIR / "data" / "backups"
 KEEP_PER_AREA = 30
 
+os.umask(0o077)
+
 
 def _email_dir(email: str) -> str:
     return hashlib.sha256(email.strip().lower().encode()).hexdigest()[:24]
@@ -25,11 +28,27 @@ def _area_dir(email: str, area: str) -> Path:
     return BACKUP_DIR / _email_dir(email) / area
 
 
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    current = path
+    stop = BASE_DIR.parent
+    while current != stop and current.exists():
+        if current == BASE_DIR:
+            break
+        try:
+            os.chmod(current, 0o700)
+        except OSError:
+            pass
+        current = current.parent
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def area_for_action(action_type: str) -> str | None:
+    if action_type == "import_tasks":
+        return "tasks"
     if action_type.endswith("_task") or action_type.endswith("_tasklist") or action_type in {"create_task", "update_task", "complete_task", "delete_task"}:
         return "tasks"
     if action_type.endswith("_calendar_event"):
@@ -52,8 +71,9 @@ def create_backup(area: str, email: str, reason: str = "", action: dict[str, Any
         "data": data,
     }
     path = _area_dir(email, area) / f"{backup_id}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.chmod(path, 0o600)
     _prune(email, area)
     return _meta(doc)
 

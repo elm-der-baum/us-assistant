@@ -281,7 +281,12 @@ async function applyBackup(area, id) {
   try {
     const res = await api("POST", "/api/backups/apply", { area, id });
     if (!res.ok) {
-      alert("Restore fehlgeschlagen: " + errorText(res.error || res.result || "Unbekannt"));
+      alert("Restore-Freigabe fehlgeschlagen: " + errorText(res.error || res.result || "Unbekannt"));
+      return;
+    }
+    if (res.pending) {
+      alert("Restore wurde als Safe-Mode-Freigabe angelegt. Bitte im Tab Freigaben genehmigen.");
+      await refreshStatus();
       return;
     }
     alert("Backup wiederhergestellt. Sicherheitsbackup wurde angelegt.");
@@ -303,23 +308,26 @@ async function loadSafeMode() {
     if (!actions.length) { container.innerHTML = "<p>✅ Keine ausstehenden Freigaben.</p>"; return; }
     container.innerHTML = `<div class="bulk-actions"><button id="btn-approve-all" class="btn-ok" type="button">✅ Alle ${actions.length} freigeben</button><span class="action-meta">Legt pro betroffenem Bereich nur ein Backup an.</span></div>` + actions.map(a => {
       const p = a.payload || {};
-      const detailLines = Object.entries(p).filter(([k]) => !["calendar_id", "tasklist_id"].includes(k)).map(([k,v]) => `<span class="action-meta">${k}: ${JSON.stringify(v).slice(0,120)}</span>`).join("<br>");
-      return `<div class="action-card" id="act-${a.id}">
+      const detailLines = Object.entries(p)
+        .filter(([k]) => !["calendar_id", "tasklist_id"].includes(k))
+        .map(([k,v]) => `<span class="action-meta">${h(k)}: ${h(String(JSON.stringify(v)).slice(0,120))}</span>`)
+        .join("<br>");
+      return `<div class="action-card" id="act-${h(a.id)}">
         <div class="action-title">🛡️ ${h(a.title)}</div>
-        <div class="action-meta">Typ: ${a.type} | Quelle: ${a.source} | Status: ${a.status}</div>
+        <div class="action-meta">Typ: ${h(a.type)} | Quelle: ${h(a.source)} | Status: ${h(a.status)}</div>
         ${detailLines ? '<div class="action-detail">' + detailLines + '</div>' : ''}
         <div class="action-actions">
-          <button class="btn-ok approve-btn" data-id="${a.id}">✅ Genehmigen</button>
-          <button class="btn-secondary edit-btn" data-id="${a.id}">✏️ Bearbeiten</button>
-          <button class="btn-danger reject-btn" data-id="${a.id}">❌ Ablehnen</button>
-          <button class="btn-danger delete-btn" data-id="${a.id}">🗑️ Löschen</button>
+          <button class="btn-ok approve-btn" data-id="${h(a.id)}">✅ Genehmigen</button>
+          <button class="btn-secondary edit-btn" data-id="${h(a.id)}">✏️ Bearbeiten</button>
+          <button class="btn-danger reject-btn" data-id="${h(a.id)}">❌ Ablehnen</button>
+          <button class="btn-danger delete-btn" data-id="${h(a.id)}">🗑️ Löschen</button>
         </div>
-        <div class="edit-form hidden" id="edit-form-${a.id}">
-          <div class="setting-row"><label>Titel</label><input type="text" id="edit-title-${a.id}" value="${h(a.title)}"></div>
-          <div class="setting-row"><label>Payload (JSON)</label><textarea id="edit-payload-${a.id}" rows="4">${h(JSON.stringify(a.payload || {}, null, 2))}</textarea></div>
+        <div class="edit-form hidden" id="edit-form-${h(a.id)}">
+          <div class="setting-row"><label>Titel</label><input type="text" id="edit-title-${h(a.id)}" value="${h(a.title)}"></div>
+          <div class="setting-row"><label>Payload (JSON)</label><textarea id="edit-payload-${h(a.id)}" rows="4">${h(JSON.stringify(a.payload || {}, null, 2))}</textarea></div>
           <div class="setting-actions">
-            <button class="btn-primary save-edit-btn" data-id="${a.id}">💾 Speichern</button>
-            <button class="btn-secondary cancel-edit-btn" data-id="${a.id}">Abbrechen</button>
+            <button class="btn-primary save-edit-btn" data-id="${h(a.id)}">💾 Speichern</button>
+            <button class="btn-secondary cancel-edit-btn" data-id="${h(a.id)}">Abbrechen</button>
           </div>
         </div>
       </div>`;
@@ -1047,7 +1055,10 @@ function _exportUrl(format, all, activeListId) {
     try {
       const text = await file.text();
       const res = await api("POST", "/api/tasks/import", JSON.parse(text));
-      if (res.created !== undefined) {
+      if (res.pending) {
+        alert("Import wurde als Safe-Mode-Freigabe angelegt. Bitte im Tab Freigaben genehmigen.");
+        await refreshStatus();
+      } else if (res.created !== undefined) {
         alert(res.created + " Tasks importiert" + (res.errors ? ", " + res.errors + " Fehler" : ""));
         if (document.getElementById("tab-todos").classList.contains("active")) loadTodos();
       } else {

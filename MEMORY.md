@@ -4,7 +4,7 @@
 - Pfad: `/home/rdpuser/assistant/`
 - Ziel: persönlicher KI-Assistent für Google Calendar + Tasks.
 - UI: mobil + desktop, Web-Chat + Telegram-Chat.
-- Schreibzugriff ausschließlich über Safe Mode.
+- Schreibzugriff ausschließlich über Safe Mode; Import/Restore erzeugen ebenfalls Freigaben.
 - **Google Account = Login / Identität**. Alles (Chat, Safe-Mode, AI/Telegram-Settings) hängt am Google-Konto.
 
 ## Entscheidungen
@@ -27,6 +27,7 @@ Aktionen sind an die Google-E-Mail des Users gebunden.
 - App privat: nginx Basic Auth + WireGuard/VPN.
 - Session-Cookies: HttpOnly, Secure, SameSite Lax, Path /assistant/.
 - Kein Secret in Dateien, Git oder Logs.
+- Storage-Härtung: SQLite/Uploads/Backups mit privaten Dateirechten; Static-Serving blockiert Path Traversal.
 
 ## Nächste Schritte
 - Google OAuth in echter Umgebung testen

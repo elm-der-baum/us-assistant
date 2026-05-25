@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -182,17 +183,14 @@ def _handle_callback(chat_id: int, data: str, user_email: str) -> None:
 
 
 def _perform_approve(chat_id: int, action_id: str, user_email: str) -> None:
-    action = get_pending_action(action_id, user_email=user_email)
-    if not action:
-        send_message(chat_id, "Aktion nicht gefunden.", user_email=user_email)
-        return
+    import safe_mode
 
-    result = _exec_action(action, user_email)
-    if result.get("ok") or ("error" not in result and result.get("status") != "error"):
-        update_pending_action(action_id, "done", result=result, user_email=user_email)
-        send_message(chat_id, f"✅ Ausgeführt: {action['title']}", user_email=user_email)
+    result = safe_mode.approve(action_id, user_email=user_email)
+    action = result.get("action") or get_pending_action(action_id, user_email=user_email)
+    title = str(action.get("title", action_id)) if isinstance(action, dict) else action_id
+    if result.get("ok"):
+        send_message(chat_id, f"✅ Ausgeführt: {title}", user_email=user_email)
     else:
-        update_pending_action(action_id, "error", error=result.get("error", "Fehler"), user_email=user_email)
         send_message(chat_id, f"❌ Fehler: {result.get('error', 'Unbekannt')}", user_email=user_email)
 
 
@@ -387,6 +385,8 @@ _poll_thread: threading.Thread | None = None
 
 def start() -> None:
     global _poll_thread
+    if os.environ.get("ASSISTANT_TELEGRAM_POLLING", "1").lower() in {"0", "false", "no", "off"}:
+        return
     if _poll_thread is not None:
         return
     _poll_thread = threading.Thread(target=_run_poll_loop, daemon=True)

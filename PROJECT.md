@@ -2,7 +2,7 @@
 
 KI-gesteuerter Google-Assistent: Kalender, Todos.
 **Google Account = Login**. Alle Daten (Chat, Freigaben, AI/Telegram-Settings) am Google-Konto.
-Kontrollierter Schreibzugriff über Safe-Mode-Genehmigung.
+Kontrollierter Schreibzugriff über Safe-Mode-Genehmigung. Auch Import/Restore laufen über Safe Mode.
 
 ## Tech
 - Backend: Python 3.12 (http.server, urllib, sqlite3) + fpdf2 für PDF-Export
@@ -41,6 +41,7 @@ python3 server.py
 ### Daten
 - `GET  /api/calendar/events` – Kalender-Events
 - `GET  /api/tasks` – Todos
+- `POST /api/tasks/import` – Import als Safe-Mode-Freigabe anlegen
 - `GET  /api/chat/messages` – Chat-Verlauf
 - `GET  /api/safe-mode/pending` – Ausstehende Freigaben
 - `POST /api/safe-mode/approve` – Freigeben
