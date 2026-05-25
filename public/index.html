@@ -170,9 +170,24 @@
 
   <div class="settings-section">
     <h3>🧠 AI <span class="scope-tag">pro Google Account</span></h3>
+    <p class="hint small-hint">OpenAI nutzbar über einen OpenAI API-Key von platform.openai.com. Ein ChatGPT Plus/Pro-Abo ist getrennt und kann nicht direkt als API-Key verwendet werden.</p>
+    <div class="setting-row">
+      <label>Schnellwahl</label>
+      <div class="preset-row">
+        <select id="ai-provider-preset">
+          <option value="">Preset auswählen…</option>
+          <option value="openai-gpt41-mini">OpenAI API – GPT-4.1 mini (empfohlen/günstig)</option>
+          <option value="openai-gpt41">OpenAI API – GPT-4.1</option>
+          <option value="openai-gpt4o">OpenAI API – GPT-4o</option>
+          <option value="openai-reasoning">OpenAI API – o4-mini Reasoning</option>
+          <option value="ollama-local">Ollama lokal – OpenAI-kompatibel</option>
+        </select>
+        <button id="btn-apply-ai-preset" class="btn-secondary" type="button">Übernehmen</button>
+      </div>
+    </div>
     <div class="setting-row">
       <label>AI_BASE_URL</label>
-      <input type="text" id="s-AI_BASE_URL" placeholder="https://…">
+      <input type="text" id="s-AI_BASE_URL" placeholder="https://api.openai.com/v1">
     </div>
     <div class="setting-row">
       <label>AI_API_KEY</label>
@@ -244,6 +259,6 @@
 
 </main>
 
-<script src="static/app.js?v=24"></script>
+<script src="static/app.js?v=25"></script>
 </body>
 </html>

@@ -17,7 +17,7 @@
 - Secrets nie in Git.
 - Telegram: Long Polling, per User-ID auf eine Google-E-Mail gebunden.
 - Google OAuth Callback: `https://findyou.biz/assistant/oauth/callback`
-- AI: OpenAI-compatible API.
+- AI: OpenAI-compatible API. OpenAI API nutzbar über Preset `https://api.openai.com/v1`; ChatGPT Plus/Pro-Abo ersetzt keinen API-Key.
 
 ## Safe Mode
 Lesen erlaubt, Schreiben nur nach Freigabe (Web-UI oder Telegram-Inline-Buttons).

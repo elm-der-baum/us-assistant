@@ -746,6 +746,39 @@ el("chat-form").addEventListener("submit", async (ev) => {
 });
 
 // ---- Settings ----
+const AI_PRESETS = {
+  "openai-gpt41-mini": {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    thinkEffort: "",
+    contextMaxTokens: "128000",
+  },
+  "openai-gpt41": {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1",
+    thinkEffort: "",
+    contextMaxTokens: "128000",
+  },
+  "openai-gpt4o": {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o",
+    thinkEffort: "",
+    contextMaxTokens: "128000",
+  },
+  "openai-reasoning": {
+    baseUrl: "https://api.openai.com/v1",
+    model: "o4-mini",
+    thinkEffort: "medium",
+    contextMaxTokens: "128000",
+  },
+  "ollama-local": {
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.1",
+    thinkEffort: "",
+    contextMaxTokens: "128000",
+  },
+};
+
 async function loadSettings() {
   try {
     const data = await api("GET", "/api/settings");
@@ -760,6 +793,7 @@ async function loadSettings() {
         inp.value = s.value || "";
       }
     });
+    syncAiPresetFromFields();
     checkGoogleAuthButton();
     await loadSystemStatus();
   } catch(e) {
@@ -785,6 +819,26 @@ function getSettingValues(section) {
   return { vals };
 }
 
+function applyAiPreset() {
+  const select = el("ai-provider-preset");
+  const preset = AI_PRESETS[select?.value || ""];
+  if (!preset) return;
+  el("s-AI_BASE_URL").value = preset.baseUrl;
+  el("s-AI_MODEL").value = preset.model;
+  el("s-AI_THINK_EFFORT").value = preset.thinkEffort;
+  el("s-AI_CONTEXT_MAX_TOKENS").value = preset.contextMaxTokens;
+}
+
+function syncAiPresetFromFields() {
+  const select = el("ai-provider-preset");
+  if (!select) return;
+  const base = (el("s-AI_BASE_URL")?.value || "").trim().replace(/\/$/, "");
+  const model = (el("s-AI_MODEL")?.value || "").trim();
+  const think = (el("s-AI_THINK_EFFORT")?.value || "").trim();
+  const match = Object.entries(AI_PRESETS).find(([, p]) => p.baseUrl === base && p.model === model && p.thinkEffort === think);
+  select.value = match ? match[0] : "";
+}
+
 function checkGoogleAuthButton() {
   const btn = el("btn-google-auth");
   const clientId = el("s-GOOGLE_CLIENT_ID");
@@ -799,8 +853,12 @@ function checkGoogleAuthButton() {
 
 document.addEventListener("input", (ev) => {
   if (ev.target.id === "s-GOOGLE_CLIENT_ID") checkGoogleAuthButton();
+  if (["s-AI_BASE_URL", "s-AI_MODEL", "s-AI_THINK_EFFORT"].includes(ev.target.id)) syncAiPresetFromFields();
   if (ev.target.type === "password") ev.target.dataset.hasValue = "0";
 });
+
+el("btn-apply-ai-preset").addEventListener("click", applyAiPreset);
+el("ai-provider-preset").addEventListener("change", applyAiPreset);
 
 // ---- Setup Modal ----
 function showSetupModal() {

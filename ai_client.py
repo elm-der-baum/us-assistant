@@ -244,8 +244,13 @@ def chat_completion(messages: list[dict[str, Any]], temperature: float = 0.2, us
         "messages": messages,
         "temperature": temperature,
     }
-    if s.get("think_effort"):
-        body["reasoning_effort"] = s["think_effort"]
+    think_effort = (s.get("think_effort") or "").strip().lower()
+    if think_effort and think_effort not in {"off", "none", "disabled"}:
+        host = urllib.parse.urlparse(s["base_url"]).netloc.lower()
+        # OpenAI currently accepts low/medium/high for reasoning models; avoid
+        # sending unsupported values such as "max" to the official API.
+        if "openai.com" not in host or think_effort in {"low", "medium", "high"}:
+            body["reasoning_effort"] = think_effort
     data = json.dumps(body).encode()
     # large images = large base64 payload = slower AI response → increase timeout
     has_vision = any(
